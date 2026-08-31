@@ -29,5 +29,6 @@ extern atomic_int g_task_id;
 
 
 void *painter(void *arg);
+void seed_source_tasks(void);
 
 #endif

@@ -47,8 +47,6 @@ static int sg1_total_pre_cnt[864] = {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 7, 0, 1, 1, 1
 typedef struct subgraph {
     uint32_t  task_cnt;
     uint32_t* task_id;
-    char*     type;          /* aiv=0, aic=1, mix=1 */
-    int*      duration;
     int*      pre_cnt;
     int*      pre_idx;
     int*      predecessors;

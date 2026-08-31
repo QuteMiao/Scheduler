@@ -6,6 +6,7 @@
 # Usage:
 #   make            # build ./scheduler using the default workload graph
 #   make run        # build (if needed) then execute ./scheduler
+#   make LOG=1      # enable worker logging (off by default; see conf.h WORKER_LOG)
 #   make CASE=total_graph   # build against the combined total-graph case
 #   make clean      # remove build artifacts and the executable
 
@@ -28,11 +29,14 @@ else
 $(error unknown CASE '$(CASE)': expected 'subgraph' or 'total_graph')
 endif
 
+# Worker logging: 0 = off (default), 1 = on. Override with: make LOG=1
+LOG ?= 0
+
 # SCHEDULER_CASE is stringized by include/painter.h, so pass it unquoted.
-CPPFLAGS += -DSCHEDULER_CASE=$(SCHEDULER_CASE) -DPAINTER_THREAD_CNT=$(PAINTER_THREAD_CNT)
+CPPFLAGS += -DSCHEDULER_CASE=$(SCHEDULER_CASE) -DPAINTER_THREAD_CNT=$(PAINTER_THREAD_CNT) -DWORKER_LOG=$(LOG)
 
 TARGET := scheduler
-SRCS   := src/scheduler.c src/dispatch.c src/painter.c
+SRCS   := src/scheduler.c src/dispatch.c src/painter.c src/log.c
 OBJS   := $(SRCS:src/%.c=build/%.o)
 
 .PHONY: all run clean

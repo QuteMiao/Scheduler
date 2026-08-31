@@ -13,7 +13,7 @@
 #include "conf.h"
 #include "painter.h"
 #include "dispatch.h"
-// #include "common/log.h"
+#include "log.h"
 #include <string.h>
 
 uint64_t get_time_ns(void)
@@ -46,27 +46,17 @@ static void handle_signal(int sig)
     atomic_store_explicit(&g_is_done, true, memory_order_release);
 }
 
-void *worker(void *arg)
-{
-    int tid = (int)(intptr_t)arg;
-    printf("%d,\n", tid);
-    return NULL;
-}
-
 int main(void) {
     pthread_t dispatch_threads[DISPATCH_THREAD_CNT];
     pthread_t painter_threads[PAINTER_THREAD_CNT];
 
-    // log_init("scheduler");
-
-    // /* SCHEDULER_LOG env var controls worker logging at runtime:
-    //  *   unset or "1" -> enabled (default)
-    //  *   "0" or "off" -> disabled for performance testing */
-    // char *log_env = getenv("SCHEDULER_LOG");
-    // g_worker_log = (!log_env || (strcmp(log_env, "0") != 0 && strcmp(log_env, "off") != 0)) ? 1 : 0;
+#if WORKER_LOG
+    log_init("scheduler");
+#endif
 
     init_ctrl_t();
-    // WORKER_LOGF("painter_cnt,%d,dispatcher_cnt,%d", PAINTER_THREAD_CNT, DISPATCH_THREAD_CNT);
+    seed_source_tasks();
+    WORKER_LOGF("painter_cnt,%d,dispatcher_cnt,%d", PAINTER_THREAD_CNT, DISPATCH_THREAD_CNT);
     /* Register signal handlers for graceful shutdown on Ctrl+C */
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
@@ -99,28 +89,8 @@ int main(void) {
         pthread_join(dispatch_threads[i], NULL);
     }
 
-    /* ---- dump task execution records to file ---- */
-    {
-        const char *path = "task_exec_records.csv";
-        FILE *f = fopen(path, "w");
-        if (f != NULL) {
-            fprintf(f, "task_id,task_type,core_id,start_time_ns,end_time_ns,duration_ns\n");
-            for (uint32_t i = 0; i < total_task_cnt; i++) {
-                const task_exec_record_t *r = &g_task_exec_records[i];
-                fprintf(f, "%u,%u,%u,%llu,%llu,%llu\n",
-                        r->task_id, r->task_type, r->core_id,
-                        (unsigned long long)r->start_time_ns,
-                        (unsigned long long)r->end_time_ns,
-                        (unsigned long long)(r->end_time_ns - r->start_time_ns));
-            }
-            fclose(f);
-            printf("[scheduler] wrote %u records to %s\n", total_task_cnt, path);
-        } else {
-            fprintf(stderr, "[scheduler] failed to open %s for writing\n", path);
-        }
-    }
-
-    // WORKER_LOGF("scheduler_duration,%lld/ns", duration);
-    // log_close();
+#if WORKER_LOG
+    log_close();
+#endif
     return 0;
 }

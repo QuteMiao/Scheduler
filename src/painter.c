@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #include "painter.h"
-// #include "common/log.h"
+#include "log.h"
 
 static inline uint64_t get_time_ns(void)
 {
@@ -24,8 +24,26 @@ void send_2_ready_queue(uint32_t ready_cnt[], uint32_t rq_buf[][RQ_BATCH_SIZE]) 
     for (uint32_t j = 0; j < TASK_TYPE_CNT; j++) {
         if (ready_cnt[j] > 0)
         {
-            // WORKER_LOGF("batch_enqueue,%d,cnt,%u,first,%d",j, ready_cnt[j], rq_buf[j][0]);
+            WORKER_LOGF("batch_enqueue,%u,cnt,%u,first,%u", j, ready_cnt[j], rq_buf[j][0]);
             batch_enqueue(&g_ready_queue[j], rq_buf[j], ready_cnt[j]);
+        }
+    }
+}
+
+void seed_source_tasks(void)
+{
+    /* Initially enqueue every task whose in-degree (total_pre_cnt) is 0.
+     * Each subgraph owns a disjoint subset of the global task ids, so walking
+     * each subgraph's task list seeds every source task exactly once. */
+    for (int tid = 0; tid < PAINTER_THREAD_CNT; tid++) {
+        uint32_t task_cnt = test_graph[tid].task_cnt;
+        for (uint32_t i = 0; i < task_cnt; i++) {
+            uint32_t task_id = test_graph[tid].task_id[i];
+            if (test_graph[tid].total_pre_cnt[task_id] <= 0) {
+                task_type_t type = (task_type_t)total_type[task_id];
+                WORKER_LOGF("seed,source,task_id,%u,type,%d", task_id, (int)type);
+                enqueue(&g_ready_queue[type], task_id);
+            }
         }
     }
 }
@@ -44,12 +62,12 @@ void resolve_dep(int tid, uint32_t cnt, uint32_t* cq_buf, uint32_t rq_buf[][RQ_B
         for (uint32_t k = idx; k < (idx + succ_cnt); k++) {
             succ_id = test_graph[tid].successors[k];
             test_graph[tid].total_pre_cnt[succ_id]--;
-            // WORKER_LOGF("painter,task_id,%u,successor_id,%u,predecessor_cnt,%u", task_id, succ_id, g_predecessor_cnt[succ_id & RING_MASK]);
+            WORKER_LOGF("painter,task_id,%u,successor_id,%u,predecessor_cnt,%d", task_id, succ_id, test_graph[tid].total_pre_cnt[succ_id]);
             if (test_graph[tid].total_pre_cnt[succ_id] < 1) {
                 task_type_t type = total_type[succ_id];
                 rq_buf[type][ready_cnt[type]] = succ_id;
                 ready_cnt[type]++;
-                // WORKER_LOGF("ready,task_id,%d,type,%d,cnt,%d",succ_id, type, ready_cnt[type]);
+                WORKER_LOGF("ready,task_id,%u,type,%d,cnt,%u", succ_id, type, ready_cnt[type]);
             }
         }
     }
@@ -65,19 +83,22 @@ void deal_completed_queue(int tid) {
     uint32_t cnt = completed_queue_read_batch(&g_completed_queue, tid, cq_buf, CQ_BATCH_SIZE);
     if (cnt <= 0)
         return;
-
+    if (tid == 0 && cnt > 0)
+    {
+        completed_task_cnt += cnt;
+        if(completed_task_cnt >= total_task_cnt) {
+            atomic_store_explicit(&g_is_done, true, memory_order_release);
+        }
+    }
+    
     resolve_dep(tid, cnt, cq_buf, rq_buf, ready_cnt);
     send_2_ready_queue(ready_cnt, rq_buf);
 }
 
-
-
 void *painter(void *arg)
 {
     int tid = (int)(intptr_t)arg;
-
     int cnt = atomic_fetch_add(&g_start_barrier, 1);
-
     while (cnt < (DISPATCH_THREAD_CNT + PAINTER_THREAD_CNT))
     {
         cnt = atomic_load(&g_start_barrier);
@@ -95,6 +116,6 @@ void *painter(void *arg)
     {
         printf("scheduler_throughput,%.2f,MTasks/s\n",(float)(total_task_cnt * 1000.0 / elapsed_ns));
     }
-    // WORKER_LOGF("painter,%d,done", tid);
+    WORKER_LOGF("painter,%d,done", tid);
     return NULL;
 }

@@ -35,8 +35,11 @@ extern atomic_int g_start_barrier;
 #endif
 #define AIC_CNT_PER_THREAD 32
 
-/* 1: compile in worker logs; toggle at runtime via g_worker_log or WORKER_LOG env */
-#define WORKER_LOG 1
+/* Compile-time switch: 1 = compile in WORKER_LOGF() worker logging, 0 = strip it out.
+ * Default is 0 (off); enable with `make LOG=1` or -DWORKER_LOG=1. */
+#ifndef WORKER_LOG
+#define WORKER_LOG 0
+#endif
 
 /* Log output mode: 0=file, 1=stdout, 2=both */
 #define LOG_OUTPUT_MODE 2
