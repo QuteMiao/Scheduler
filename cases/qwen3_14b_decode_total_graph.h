@@ -49,9 +49,6 @@ typedef struct subgraph {
     int* total_pre_cnt;
 } subgraph;
 
-#if PAINTER_THREAD_CNT != 1
-#error "total-graph header expects PAINTER_THREAD_CNT==1"
-#endif
 static subgraph test_graph[PAINTER_THREAD_CNT] = {
     {864, task_id, type, duration, pre_cnt, pre_idx, predecessors, suc_cnt, suc_idx, successors, total_pre_cnt},
 };

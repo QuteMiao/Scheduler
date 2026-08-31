@@ -25,10 +25,10 @@
  * All dispatch threads push completed task ids here (writers are serialized
  * by a spinlock), and every painter thread drains the same ring independently
  * through its own read cursor. An entry becomes overwritable only once ALL
- * painters have advanced past it (write_pos - min(read_pos[]) <= REMOTE_RING_SIZE).
+ * painters have advanced past it (write_pos - min(read_pos[]) <= CQ_SIZE).
  */
 typedef struct {
-    uint32_t ring[REMOTE_RING_SIZE];
+    uint32_t ring[CQ_SIZE];
     _Atomic uint64_t write_pos;
     _Atomic uint64_t read_pos[PAINTER_THREAD_CNT];
     atomic_flag write_lock;
@@ -68,7 +68,7 @@ static inline void completed_queue_write_batch(completed_queue_t *q, uint32_t *i
     uint64_t wpos = atomic_load_explicit(&q->write_pos, memory_order_relaxed);
     uint32_t *ring = q->ring;
     for (uint32_t i = 0; i < cnt; i++) {
-        ring[(wpos + i) & REMOTE_RING_MASK] = items[i];
+        ring[(wpos + i) & CQ_MASK] = items[i];
     }
     atomic_store_explicit(&q->write_pos, wpos + cnt, memory_order_release);
     atomic_flag_clear_explicit(&q->write_lock, memory_order_release);
@@ -89,7 +89,7 @@ static inline uint32_t completed_queue_read_batch(completed_queue_t *q, int pain
     uint32_t cnt = (uint32_t)(avail < max_cnt ? avail : max_cnt);
     uint32_t *ring = q->ring;
     for (uint32_t i = 0; i < cnt; i++) {
-        buf[i] = ring[(rpos + i) & REMOTE_RING_MASK];
+        buf[i] = ring[(rpos + i) & CQ_MASK];
     }
 
     atomic_store_explicit(my_read, rpos + cnt, memory_order_release);
