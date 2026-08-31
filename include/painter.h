@@ -27,8 +27,7 @@
  * which conflicts with common/queue.h) */
 extern atomic_int g_task_id;
 
-
 void *painter(void *arg);
-void seed_source_tasks(void);
+void init_ready_queue(void);
 
 #endif

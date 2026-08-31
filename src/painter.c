@@ -30,20 +30,16 @@ void send_2_ready_queue(uint32_t ready_cnt[], uint32_t rq_buf[][RQ_BATCH_SIZE]) 
     }
 }
 
-void seed_source_tasks(void)
+void init_ready_queue(void)
 {
-    /* Initially enqueue every task whose in-degree (total_pre_cnt) is 0.
-     * Each subgraph owns a disjoint subset of the global task ids, so walking
-     * each subgraph's task list seeds every source task exactly once. */
-    for (int tid = 0; tid < PAINTER_THREAD_CNT; tid++) {
-        uint32_t task_cnt = test_graph[tid].task_cnt;
-        for (uint32_t i = 0; i < task_cnt; i++) {
-            uint32_t task_id = test_graph[tid].task_id[i];
-            if (test_graph[tid].total_pre_cnt[task_id] <= 0) {
-                task_type_t type = (task_type_t)total_type[task_id];
-                WORKER_LOGF("seed,source,task_id,%u,type,%d", task_id, (int)type);
-                enqueue(&g_ready_queue[type], task_id);
-            }
+    uint32_t idx = 0;
+    for (uint32_t i = 0; i < total_task_cnt; i++) {
+        uint32_t task_id = total_task_id[i];
+        if (test_graph[0].total_pre_cnt[task_id] <= 0) {
+            task_type_t type = (task_type_t)total_type[task_id];
+            idx = g_ready_queue[type].tail++;
+            g_ready_queue[type].cnt++;
+            g_ready_queue[type].tasks[idx] = task_id;
         }
     }
 }

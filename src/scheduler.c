@@ -55,7 +55,7 @@ int main(void) {
 #endif
 
     init_ctrl_t();
-    seed_source_tasks();
+    init_ready_queue();
     WORKER_LOGF("painter_cnt,%d,dispatcher_cnt,%d", PAINTER_THREAD_CNT, DISPATCH_THREAD_CNT);
     /* Register signal handlers for graceful shutdown on Ctrl+C */
     signal(SIGINT, handle_signal);
