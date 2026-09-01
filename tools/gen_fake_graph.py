@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # Usage (generate a graph header; output auto-named under cases/):
 #   python3 tools/gen_fake_graph.py -t 480 -p 8 -l 4 -c 4 -d 5 -s 16
-#     -> cases/fg_t480_p8_l3_c2_d5.h   [--dot out.dot] [--png out.png]
+#     -> cases/fg_t480_p8_l4_c4_d5.h   [--dot out.dot] [--png out.png]
 #   # -t/--tasks-per-layer  -p/--pre-cnt  -l/--chain-depth  -c/--thread-cnt
 #   # -s/--chunk-size  -d/--avg-duration  --dot  --png  --from-header
 """
 Generate a synthetic DAG subgraph header file in the same shape as
-cases/qwen3_14b_decode_subgraph.h (global total_task_id/total_type/
-total_duration plus per-subgraph task_id/pre_cnt/pre_idx/predecessors and
-suc_cnt/suc_idx/successors/total_pre_cnt).
+cases/fg_t480_p4_l4_c4_d5.h (global total_task_id/total_type/total_duration/
+total_pre_cnt plus per-subgraph task_id/pre_idx/predecessors and
+suc_cnt/suc_idx/successors).
 
 Parameters:
   --tasks-per-layer  Tasks per layer (breadth); total = tasks_per_layer * chain_depth
@@ -278,6 +278,9 @@ def generate_header(args: argparse.Namespace) -> str:
     lines.append(f"static uint32_t total_task_id[{task_cnt}] = {{{_array_body(total_task_id_vals)}}};")
     lines.append(f"static char total_type[{task_cnt}] = {{{_array_body(total_type_vals)}}};")
     lines.append(f"static int total_duration[{task_cnt}] = {{{_array_body(total_duration_vals)}}};")
+    lines.append("/* total_pre_cnt[] is decremented by every painter thread at runtime;")
+    lines.append(" * keep it on its own 64-byte cache line to avoid false sharing. */")
+    lines.append(f"static _Alignas(CACHE_LINE_SIZE) int total_pre_cnt[{task_cnt}] = {{{_array_body(total_pre_cnt_vals)}}};")
     lines.append("")
 
     # Per-subgraph arrays.
@@ -291,8 +294,6 @@ def generate_header(args: argparse.Namespace) -> str:
         lines.append(f"#define {up}_SG{t}_TASK_CNT {n_sub}")
         lines.append(f"/* {sg}_task_id[]: ids of this subgraph's tasks (round-robin chunk of {chunk_size}) */")
         lines.append(f"static uint32_t {sg}_task_id[{up}_SG{t}_TASK_CNT]  = {{{_array_body(group['task_id'])}}};")
-        lines.append(f"/* {sg}_pre_cnt[]: number of predecessors per task */")
-        lines.append(f"static int      {sg}_pre_cnt[{up}_SG{t}_TASK_CNT]  = {{{_array_body(group['pre_cnt'])}}};")
         lines.append(f"/* {sg}_pre_idx[]: offset into {sg}_predecessors[] per task */")
         lines.append(f"static int      {sg}_pre_idx[{up}_SG{t}_TASK_CNT]  = {{{_array_body(group['pre_idx'])}}};")
         lines.append(f"/* {sg}_predecessors[]: flattened predecessor id lists (global ids) */")
@@ -300,14 +301,13 @@ def generate_header(args: argparse.Namespace) -> str:
         lines.append(f"static int {sg}_suc_cnt[{task_cnt}] = {{{_array_body(suc_cnt[t])}}};")
         lines.append(f"static int {sg}_suc_idx[{task_cnt}] = {{{_array_body(suc_idx[t])}}};")
         lines.append(f"static int {sg}_successors[] = {{{succ_body}}};")
-        lines.append(f"static int {sg}_total_pre_cnt[{task_cnt}] = {{{_array_body(total_pre_cnt_vals)}}};")
-        lines.append("")
+        if t < thread_cnt - 1:
+            lines.append("")
 
     # subgraph struct
     lines.append("typedef struct subgraph {")
     lines.append("    uint32_t  task_cnt;")
     lines.append("    uint32_t* task_id;")
-    lines.append("    int*      pre_cnt;")
     lines.append("    int*      pre_idx;")
     lines.append("    int*      predecessors;")
     lines.append("    int* suc_cnt;")
@@ -323,8 +323,8 @@ def generate_header(args: argparse.Namespace) -> str:
         sg = f"sg{t}"
         n_sub = len(groups[t]["task_id"])
         line = (
-            f"    {{{n_sub}, {sg}_task_id, {sg}_pre_cnt, {sg}_pre_idx, {sg}_predecessors, "
-            f"{sg}_suc_cnt, {sg}_suc_idx, {sg}_successors, {sg}_total_pre_cnt}}"
+            f"    {{{n_sub}, {sg}_task_id, {sg}_pre_idx, {sg}_predecessors, "
+            f"{sg}_suc_cnt, {sg}_suc_idx, {sg}_successors, total_pre_cnt}}"
         )
         if t < thread_cnt - 1:
             line += ","
@@ -374,6 +374,22 @@ def _extract_c_array(text: str, var_prefix: str) -> Optional[list[int]]:
     return values
 
 
+def _derive_pre_cnt(pre_idx: list[int], n: int, total_preds: int) -> list[int]:
+    """Reconstruct per-task predecessor counts from pre_idx offsets.
+
+    Headers generated after the ``pre_cnt`` field was dropped only store
+    ``pre_idx`` + ``predecessors``. The count for task ``i`` is the span
+    between ``pre_idx[i]`` and ``pre_idx[i+1]`` (or the end of the flattened
+    predecessor array for the final task).
+    """
+    counts = []
+    for i in range(n):
+        start = pre_idx[i]
+        end = pre_idx[i + 1] if i + 1 < n else total_preds
+        counts.append(end - start)
+    return counts
+
+
 def parse_header(header_path: str) -> tuple[list[list[int]], list[list[int]], list[list[int]], list[list[int]], int]:
     """Parse a generated .h subgraph header file.
 
@@ -404,6 +420,10 @@ def parse_header(header_path: str) -> tuple[list[list[int]], list[list[int]], li
             typs = [total_type[tid] for tid in ids]
         pre_cnts = _extract_c_array(content, f"sg{t}_pre_cnt")
         preds = _extract_c_array(content, f"sg{t}_predecessors")
+        if pre_cnts is None and preds is not None:
+            pre_idx = _extract_c_array(content, f"sg{t}_pre_idx")
+            if pre_idx is not None:
+                pre_cnts = _derive_pre_cnt(pre_idx, len(ids), len(preds))
         task_ids_per_sg.append(ids)
         types_per_sg.append(typs)
         pre_cnts_per_sg.append(pre_cnts if pre_cnts is not None else [])

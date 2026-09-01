@@ -6,7 +6,12 @@
 # dependencies: dispatch.c, painter.c, log.c) with
 #   -DSCHEDULER_CASE=cases/<name>.h
 # and the painter thread count extracted from that header's
-# "PAINTER_THREAD_CNT=N" comment, producing bin/<name>.
+# "PAINTER_THREAD_CNT=N" comment.
+#
+# For each dispatch thread count in DISPATCH_THREAD_CNTS (default "1 2") one
+# binary is produced:
+#   -DDISPATCH_THREAD_CNT=1 -> bin/<name>          (default)
+#   -DDISPATCH_THREAD_CNT=N -> bin/<name>_d<N>     (for N > 1)
 #
 # Usage:
 #   ./build_all.sh              # build every case found in cases/
@@ -14,7 +19,8 @@
 #   ./build_all.sh clean        # remove the bin/ output directory
 #   CLEAN=1 ./build_all.sh      # clean, then rebuild everything
 #
-# Environment overrides: CC, CFLAGS, CPPFLAGS, JOBS (parallel builds).
+# Environment overrides: CC, CFLAGS, CPPFLAGS, JOBS (parallel builds),
+# DISPATCH_THREAD_CNTS (space-separated dispatch thread counts).
 
 set -euo pipefail
 
@@ -28,6 +34,7 @@ CC="${CC:-cc}"
 CFLAGS="${CFLAGS:--std=gnu11 -O2 -Wall -Wextra -pthread}"
 CPPFLAGS="${CPPFLAGS:--Iinclude -Isrc -I.}"
 JOBS="${JOBS:-1}"
+DISPATCH_THREAD_CNTS="${DISPATCH_THREAD_CNTS:-1 2}"
 
 SRCS="src/scheduler.c src/dispatch.c src/painter.c src/log.c"
 
@@ -49,18 +56,28 @@ painter_thread_cnt() {
 
 build_case() {
     local header="$1"                # absolute path: cases/<name>.h
-    local name cnt out
+    local name pcnt d out suffix
     name="$(basename "$header" .h)"
-    cnt="$(painter_thread_cnt "$header")"
-    out="$BIN_DIR/$name"
+    pcnt="$(painter_thread_cnt "$header")"
 
-    log "==> building $name (PAINTER_THREAD_CNT=$cnt)"
     # shellcheck disable=SC2086
-    "$CC" $CFLAGS $CPPFLAGS \
-        -DSCHEDULER_CASE="cases/$name.h" \
-        -DPAINTER_THREAD_CNT="$cnt" \
-        -o "$out" $SRCS
-    log "    -> $out"
+    for d in $DISPATCH_THREAD_CNTS; do
+        if [[ "$d" -eq 1 ]]; then
+            suffix=""
+        else
+            suffix="_d$d"
+        fi
+        out="$BIN_DIR/$name$suffix"
+
+        log "==> building $name (PAINTER_THREAD_CNT=$pcnt, DISPATCH_THREAD_CNT=$d)"
+        # shellcheck disable=SC2086
+        "$CC" $CFLAGS $CPPFLAGS \
+            -DSCHEDULER_CASE="cases/$name.h" \
+            -DPAINTER_THREAD_CNT="$pcnt" \
+            -DDISPATCH_THREAD_CNT="$d" \
+            -o "$out" $SRCS
+        log "    -> $out"
+    done
 }
 
 # ---------------------------------------------------------------------------

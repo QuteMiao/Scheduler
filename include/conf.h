@@ -22,12 +22,12 @@ extern cacheline_int_t g_start_barrier;
 #define AIC_CNT_PER_DIE 32
 #define EXE_TYPE_CNT 2
 
-#define RQ_SIZE 1024
+#define RQ_SIZE 4096
 #define RQ_BATCH_SIZE 512
 
+#define CQ_SIZE 4096
 #define CQ_BATCH_SIZE 512
 #define CQ_MASK (CQ_SIZE - 1)
-#define CQ_SIZE 4096
 
 #ifndef PAINTER_THREAD_CNT
 #define PAINTER_THREAD_CNT 4
