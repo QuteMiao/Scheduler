@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheduler 任务调度器 · 代码运行逻辑分析报告</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1c2438; --panel3:#232c44;
+    --line:#2c3757; --txt:#dbe3f5; --muted:#8b96b5; --accent:#4f8cff;
+    --accent2:#22c55e; --warn:#f59e0b; --pink:#ec4899; --cyan:#22d3ee;
+    --mono:'SF Mono',ui-monospace,'JetBrains Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+    background:linear-gradient(180deg,#0d1120 0%,var(--bg) 40%);color:var(--txt);line-height:1.7;font-size:15px}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  header{padding:44px 0 28px;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 400px at 50% -120px,rgba(79,140,255,.25),transparent)}
+  header .kicker{color:var(--accent);font-size:13px;letter-spacing:2px;text-transform:uppercase;font-weight:600}
+  h1{font-size:34px;margin:10px 0 8px;font-weight:800;letter-spacing:.5px}
+  header .sub{color:var(--muted);font-size:15px;max-width:860px}
+  .badges{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+  .badge{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 14px;
+    font-size:13px;color:var(--muted)}
+  .badge b{color:var(--txt);font-weight:600}
+  .badge .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:26px 0 8px}
+  .stat{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:14px;padding:16px 18px}
+  .stat .num{font-size:26px;font-weight:800;color:var(--accent);font-family:var(--mono)}
+  .stat .lbl{font-size:12.5px;color:var(--muted);margin-top:3px}
+  nav{position:sticky;top:0;z-index:50;background:rgba(15,20,32,.85);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;gap:2px;overflow-x:auto;padding:0 16px}
+  nav button{background:none;border:none;color:var(--muted);padding:14px 16px;font-size:14.5px;cursor:pointer;
+    white-space:nowrap;border-bottom:2px solid transparent;font-family:inherit;transition:.15s}
+  nav button:hover{color:var(--txt)}
+  nav button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  section{display:none;padding:34px 0 10px}
+  section.active{display:block;animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  h2{font-size:23px;margin:0 0 6px;font-weight:750}
+  h2 .en{color:var(--muted);font-weight:500;font-size:14px;margin-left:10px}
+  .lead{color:var(--muted);margin-bottom:22px}
+  h3{font-size:17px;margin:28px 0 10px;color:#eef3ff}
+  h3 .tag{font-family:var(--mono);font-size:12px;color:var(--accent);margin-left:8px;font-weight:500}
+  p{margin:10px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+  .callout{border-left:3px solid var(--accent);background:rgba(79,140,255,.08);border-radius:0 10px 10px 0;
+    padding:12px 16px;margin:16px 0;font-size:14.5px}
+  .callout.warn{border-left-color:var(--warn);background:rgba(245,158,11,.08)}
+  .callout.ok{border-left-color:var(--accent2);background:rgba(34,197,94,.08)}
+  .callout.pink{border-left-color:var(--pink);background:rgba(236,72,153,.08)}
+  pre{background:#0a0e1a;border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;
+    font-family:var(--mono);font-size:13px;line-height:1.6;margin:14px 0}
+  code{font-family:var(--mono)}
+  .tok-c{color:#5b6b8f;font-style:italic} .tok-k{color:#c792ea} .tok-t{color:#82aaff}
+  .tok-s{color:#c3e88d} .tok-n{color:#f78c6c} .tok-f{color:#82aaff} .tok-m{color:#ffcb6b}
+  .inline-code{background:#0a0e1a;border:1px solid var(--line);border-radius:6px;padding:1px 6px;
+    font-family:var(--mono);font-size:13px;color:#ffcb6b}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:14px 0}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:12.5px}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--accent)}
+  th .arrow{font-size:10px;opacity:.7}
+  tr:hover td{background:rgba(79,140,255,.05)}
+  .num{font-family:var(--mono);text-align:right}
+  .mono{font-family:var(--mono)}
+  .bar-wrap{background:#0a0e1a;border-radius:6px;height:10px;overflow:hidden;min-width:120px}
+  .bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--cyan));border-radius:6px;transition:width .4s}
+  .table-wrap{overflow-x:auto;max-height:560px;overflow-y:auto;border:1px solid var(--line);border-radius:12px}
+  .table-wrap thead th{position:sticky;top:0;z-index:2;background:var(--panel3)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
+  .pill.cube{background:rgba(79,140,255,.18);color:#8ab4ff}
+  .pill.vec{background:rgba(34,197,94,.18);color:#6ee7a0}
+  .pill.syn{background:rgba(245,158,11,.18);color:#fbbf24}
+  .pill.real{background:rgba(236,72,153,.18);color:#f472b6}
+  .flow{display:flex;flex-direction:column;gap:14px;align-items:center;margin:22px 0}
+  .flow-row{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;min-width:150px;
+    text-align:center;transition:.2s}
+  .node .t{font-weight:650;font-size:14px}
+  .node .d{font-size:12px;color:var(--muted);margin-top:2px}
+  .node.thread0{border-color:var(--accent)} .node.thread1{border-color:var(--accent2)}
+  .node.q{border-color:var(--warn)} .node.mem{border-color:var(--pink)}
+  .node:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .arrow{color:var(--muted);font-size:20px;padding:0 2px}
+  .arrow.v{transform:rotate(90deg);display:inline-block}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0;font-size:12.5px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .acc{border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden;background:var(--panel)}
+  .acc summary{padding:14px 18px;cursor:pointer;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center}
+  .acc summary::-webkit-details-marker{display:none}
+  .acc summary::after{content:'+';color:var(--accent);font-weight:700;font-size:18px}
+  .acc[open] summary::after{content:'–'}
+  .acc .body{padding:2px 18px 16px}
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:20px 0}
+  .toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;color:var(--txt)}
+  .toc a:hover{border-color:var(--accent)}
+  .toc .n{color:var(--accent);font-weight:800;font-family:var(--mono);margin-right:10px}
+  footer{border-top:1px solid var(--line);margin-top:40px;padding:26px 0 40px;color:var(--muted);font-size:13px}
+  .divider{height:1px;background:var(--line);margin:26px 0}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:5px 0}
+  .hl{color:#ffcb6b}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="kicker">Code Analysis Report · 代码运行逻辑解析</div>
+    <h1>Scheduler 任务调度器</h1>
+    <div class="sub">面向 NPU（AICORE）的 <b>DAG 任务调度引擎</b>。采用「Painter（依赖解析）+ Dispatch（任务派发）」双角色线程模型，通过无锁环形队列与位图状态机，把一个静态任务依赖图（DAG）按拓扑序动态推进直至全部完成。本报告逐层解析其运行逻辑。</div>
+    <div class="badges">
+      <span class="badge"><span class="dot" style="background:var(--accent)"></span>语言 <b>C11</b></span>
+      <span class="badge"><span class="dot" style="background:var(--accent2)"></span>并发 <b>pthread + C11 原子</b></span>
+      <span class="badge"><span class="dot" style="background:var(--warn)"></span>线程模型 <b>Painter / Dispatch 双角色</b></span>
+      <span class="badge"><span class="dot" style="background:var(--pink)"></span>目标硬件 <b>昇腾 AICORE (64 核 / 2 slot)</b></span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num">2</div><div class="lbl">线程角色（Painter / Dispatch）</div></div>
+      <div class="stat"><div class="num">4</div><div class="lbl">源文件（scheduler/dispatch/painter/log）</div></div>
+      <div class="stat"><div class="num">2</div><div class="lbl">无锁环形队列（就绪 / 完成）</div></div>
+      <div class="stat"><div class="num">864~3840</div><div class="lbl">测试 DAG 任务规模</div></div>
+      <div class="stat"><div class="num">22</div><div class="lbl">性能测试程序数</div></div>
+      <div class="stat"><div class="num">216</div><div class="lbl">峰值吞吐 (MTasks/s)</div></div>
+    </div>
+  </div>
+</header>
+<nav>
+  <div class="wrap" id="nav">
+    <button data-t="overview" class="active">总览</button>
+    <button data-t="arch">架构与数据流</button>
+    <button data-t="threads">线程运行逻辑</button>
+    <button data-t="structs">数据结构</button>
+    <button data-t="algo">核心算法</button>
+    <button data-t="build">构建与运行</button>
+    <button data-t="bench">性能数据</button>
+  </div>
+</nav>
+<main class="wrap">
+
+  <!-- ════════════════ 总览 ════════════════ -->
+  <section id="overview" class="active">
+    <h2>总览 <span class="en">Overview</span></h2>
+    <p class="lead">这个项目是一个面向昇腾 NPU 的<b>任务级 DAG 调度器</b>：给定一张静态的、带依赖关系的计算图，调度器负责把「当前可执行」的任务源源不断地派发到计算单元，并在任务完成后解锁其后继任务，直到整张图执行完毕。</p>
+
+    <div class="callout">一句话概括运行逻辑：<b>Painter 线程负责「拆依赖、产出就绪任务」；Dispatch 线程负责「把就绪任务派发到空闲核、回收完成状态」；两类线程通过两张环形队列（就绪队列 / 完成队列）解耦、形成一个闭环的流水线。</b></div>
+
+    <h3>项目文件结构 <span class="tag">tree</span></h3>
+<pre><span class="tok-c">Scheduler/</span>
+├── <span class="tok-t">src/</span>
+│   ├── scheduler.c     <span class="tok-c">// main()：线程创建 / 启动屏障 / 信号 / join</span>
+│   ├── dispatch.c      <span class="tok-c">// Dispatch 线程：派发任务、回收完成、位图状态机</span>
+│   ├── painter.c       <span class="tok-c">// Painter 线程：依赖解析、就绪入队、吞吐统计</span>
+│   └── log.c           <span class="tok-c">// WORKER_LOG 可选日志后端</span>
+├── <span class="tok-t">include/</span>
+│   ├── conf.h          <span class="tok-c">// 全局常量 / 缓存行对齐原子类型 / 线程数宏</span>
+│   ├── task.h          <span class="tok-c">// 任务类型枚举 (CUBE/VECTOR/MIX)</span>
+│   ├── queue.h         <span class="tok-c">// MPSC 就绪队列（双自旋锁环形缓冲）</span>
+│   ├── dispatch.h      <span class="tok-c">// 完成队列 + ctrl_t 控制块定义</span>
+│   ├── painter.h       <span class="tok-c">// painter 入口 + 静态图包含 (case)</span>
+│   ├── a6.h           <span class="tok-c">// AICORE 寄存器地址宏 (仅 REAL_CHIP 使用)</span>
+│   └── log.h          <span class="tok-c">// WORKER_LOGF 宏</span>
+├── <span class="tok-t">cases/</span>            <span class="tok-c">// 静态 DAG 任务图头文件（合成 + qwen 真实图）</span>
+├── <span class="tok-t">tools/</span>            <span class="tok-c">// 生成 / 注入 DAG 的 Python 脚本</span>
+├── Makefile / build_all.sh
+└── doc/bench_report2.md <span class="tok-c">// 性能测试报告</span></pre>
+
+    <h3>核心概念速查 <span class="tag">concepts</span></h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>概念</th><th>含义</th><th>负责方</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">total_pre_cnt[]</td><td>每个任务<b>剩余未完成的前驱数</b>，归零即「就绪」</td><td>Painter 递减</td></tr>
+        <tr><td class="mono">ready_queue[]</td><td>就绪队列（按 CUBE/VECTOR 分桶）</td><td>Painter 写 / Dispatch 读</td></tr>
+        <tr><td class="mono">free_bitmap[][]</td><td>每个核 / slot 的<b>空闲位图</b>，bit=1 空闲</td><td>Dispatch 维护</td></tr>
+        <tr><td class="mono">msg_bitmap[][]</td><td>任务<b>完成位图</b>（模拟：派发即置位）</td><td>Dispatch 维护</td></tr>
+        <tr><td class="mono">completed_queue</td><td>完成队列（多写者 / 每 Painter 独立读游标）</td><td>Dispatch 写 / Painter 读</td></tr>
+        <tr><td class="mono">g_is_done</td><td>全图完成标志（原子布尔）</td><td>Painter 置位</td></tr>
+        <tr><td class="mono">g_start_barrier</td><td>启动屏障，让所有线程同时开跑</td><td>全体线程</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="callout warn">注意枚举的「坑」：<span class="inline-code">TASK_TYPE_VECTOR</span> 与 <span class="inline-code">TASK_TYPE_MIX</span> 值<b>都是 1</b>（见 task.h），所以 <span class="inline-code">TASK_TYPE_CNT=2</span> 实际只区分 <b>CUBE(0)</b> 与 <b>VECTOR/MIX(1)</b> 两种队列。</div>
+  </section>
+  <!-- ════════════════ 架构与数据流 ════════════════ -->
+  <section id="arch">
+    <h2>架构与数据流 <span class="en">Architecture &amp; Data Flow</span></h2>
+    <p class="lead">整个调度器是一个<b>生产者-消费者流水线</b>：Painter 是「就绪任务」的生产者，Dispatch 是消费者；反过来 Dispatch 又是「完成事件」的生产者，Painter 是消费者。两个方向分别用一张环形队列承载。</p>
+
+    <div class="legend">
+      <span><span class="sw" style="background:var(--accent)"></span>Painter 线程（依赖解析）</span>
+      <span><span class="sw" style="background:var(--accent2)"></span>Dispatch 线程（任务派发）</span>
+      <span><span class="sw" style="background:var(--warn)"></span>环形队列</span>
+      <span><span class="sw" style="background:var(--pink)"></span>共享内存 / 位图</span>
+    </div>
+
+    <div class="flow">
+      <div class="flow-row">
+        <div class="node thread0"><div class="t">🧵 Painter 线程</div><div class="d">resolve_dep · 拆依赖</div></div>
+        <span class="arrow">──▶</span>
+        <div class="node q"><div class="t">📥 就绪队列 ready_queue</div><div class="d">按 CUBE/VECTOR 分桶</div></div>
+        <span class="arrow">──▶</span>
+        <div class="node thread1"><div class="t">🧵 Dispatch 线程</div><div class="d">send_task · 派发</div></div>
+        <span class="arrow">──▶</span>
+        <div class="node mem"><div class="t">🗄 AICORE 位图</div><div class="d">free_bitmap / msg_bitmap</div></div>
+      </div>
+      <span class="arrow v">▲<br>│<br>▼</span>
+      <div class="flow-row">
+        <div class="node thread0"><div class="t">🧵 Painter 线程</div><div class="d">deal_completed_queue</div></div>
+        <span class="arrow">◀──</span>
+        <div class="node q"><div class="t">📤 完成队列 completed_queue</div><div class="d">每 Painter 独立游标</div></div>
+        <span class="arrow">◀──</span>
+        <div class="node thread1"><div class="t">🧵 Dispatch 线程</div><div class="d">push_2_completed_queue</div></div>
+      </div>
+    </div>
+
+    <h3>一次完整循环（闭合回路）<span class="tag">pipeline</span></h3>
+    <ol>
+      <li><b>初始化</b>：<span class="inline-code">main()</span> 调 <span class="inline-code">init_queue()</span>，把所有前驱数为 0 的任务放入就绪队列。</li>
+      <li><b>派发</b>：Dispatch 线程从就绪队列批量取出任务，按空闲核位图逐个塞进空闲核（占用 free_bitmap）。</li>
+      <li><b>执行/完成</b>：模拟模式下，任务派发的同时就置位 msg_bitmap（表示「已完成」）；真机上则等硬件回写寄存器。</li>
+      <li><b>回收</b>：Dispatch 线程读回 msg_bitmap，把完成任务的 id 写入完成队列。</li>
+      <li><b>解析</b>：Painter 线程从完成队列取任务，把每个后继的 <span class="inline-code">total_pre_cnt</span> 减一；减到 0 则入就绪队列。</li>
+      <li><b>终态</b>：当累计完成数 = 总任务数时，Painter 0 号置位 <span class="inline-code">g_is_done</span>，全部线程退出。</li>
+    </ol>
+
+    <div class="callout ok">解耦的关键：两类线程<b>不直接通信</b>，只通过就绪队列（Dispatch 消费）与完成队列（Painter 消费）交换 task_id。这使 Painter 的「图遍历」与 Dispatch 的「硬件派发」可以按不同线程数独立伸缩（<span class="inline-code">PAINTER_THREAD_CNT</span> vs <span class="inline-code">DISPATCH_THREAD_CNT</span>）。</div>
+
+    <h3>启动时序 <span class="tag">startup</span></h3>
+<pre><span class="tok-k">int</span> <span class="tok-f">main</span>(<span class="tok-k">void</span>) {
+    <span class="tok-f">init_ctrl_t</span>();          <span class="tok-c">// 初始化就绪/完成队列 + 每 dispatch 线程的位图控制块</span>
+    <span class="tok-f">init_queue</span>();     <span class="tok-c">// 无前驱任务 → 就绪队列</span>
+    <span class="tok-f">signal</span>(SIGINT,  handle_signal);   <span class="tok-c">// Ctrl+C 优雅退出 → 置 g_is_done</span>
+    <span class="tok-f">signal</span>(SIGTERM, handle_signal);
+    <span class="tok-c">// 1) 创建 PAINTER_THREAD_CNT 个 painter 线程（Linux 下绑核 3+i）</span>
+    <span class="tok-c">// 2) 创建 DISPATCH_THREAD_CNT 个 dispatch 线程（Linux 下绑核 2）</span>
+    <span class="tok-c">// 3) 先 join 所有 painter，再 join 所有 dispatch</span>
+}</pre>
+    <div class="callout warn">「先 join painter、再 join dispatch」的顺序很关键：完成标志由 painter 置位，dispatch 线程依赖该标志退出；若反了顺序可能导致 dispatch 空转等待。</div>
+  </section>
+  <!-- ════════════════ 线程运行逻辑 ════════════════ -->
+  <section id="threads">
+    <h2>线程运行逻辑 <span class="en">Thread Logic</span></h2>
+    <p class="lead">程序一共有 <span class="inline-code">1 + PAINTER_THREAD_CNT + DISPATCH_THREAD_CNT</span> 个线程。三类线程用 <span class="inline-code">g_start_barrier</span> 原子计数器做「起跑同步」，用 <span class="inline-code">g_is_done</span> 原子布尔做「收工同步」。</p>
+
+    <h3>① 启动屏障 <span class="tag">g_start_barrier</span></h3>
+    <p>每个 worker 进入循环前执行 <span class="inline-code">atomic_fetch_add(&amp;g_start_barrier.v, 1)</span> 拿到自己的序号 <span class="inline-code">cnt</span>，然后自旋直到 <span class="inline-code">cnt &gt;= (DISPATCH + PAINTER)</span>，保证<b>所有线程都就绪后才同时开始调度</b>，避免先跑的线程空转抢锁。</p>
+<pre><span class="tok-k">int</span> cnt = <span class="tok-f">atomic_fetch_add</span>(&amp;g_start_barrier.v, <span class="tok-n">1</span>);
+<span class="tok-k">while</span> (cnt &lt; (DISPATCH_THREAD_CNT + PAINTER_THREAD_CNT))
+    cnt = <span class="tok-f">atomic_load</span>(&amp;g_start_barrier.v);</pre>
+
+    <h3>② Painter 线程 <span class="tag">painter()</span></h3>
+    <p>Painter 是「图的消费者 + 就绪任务的生产者」。每个 painter 拥有一个独立的完成队列读游标，只处理<b>自己那部分</b>的完成事件。</p>
+<pre><span class="tok-k">void</span> *<span class="tok-f">painter</span>(<span class="tok-k">void</span> *arg) {
+    <span class="tok-k">int</span> tid = (<span class="tok-k">int</span>)(<span class="tok-k">intptr_t</span>)arg;
+    <span class="tok-c">/* ... 启动屏障 ... */</span>
+    <span class="tok-t">uint64_t</span> start_ns = <span class="tok-f">get_time_ns</span>();
+    <span class="tok-k">bool</span> is_done = <span class="tok-k">false</span>;
+    <span class="tok-k">while</span> (!is_done) {
+        <span class="tok-f">deal_completed_queue</span>(tid);   <span class="tok-c">// 核心：消费完成事件 → 解析依赖 → 入就绪队列</span>
+        is_done = <span class="tok-f">atomic_load</span>(&amp;g_is_done.v);
+    }
+    <span class="tok-k">if</span> (tid == <span class="tok-n">0</span>)  <span class="tok-c">// 0 号 painter 统计吞吐</span>
+        <span class="tok-f">printf</span>(<span class="tok-s">"scheduler_throughput,%.2f,MTasks/s\n"</span>,
+               (<span class="tok-k">float</span>)(total_task_cnt * <span class="tok-n">1000.0</span> / elapsed_ns));
+}</pre>
+    <details class="acc"><summary>deal_completed_queue(tid) 展开</summary><div class="body">
+<pre><span class="tok-k">void</span> <span class="tok-f">deal_completed_queue</span>(<span class="tok-k">int</span> tid) {
+    <span class="tok-c">// 零拷贝：直接拿到指向环形缓冲当前游标处的一批 task_id（不复制）</span>
+    <span class="tok-k">const uint32_t</span> *cq = <span class="tok-f">completed_queue_read_batch</span>(&amp;g_completed_queue, tid, &amp;cnt, CQ_BATCH_SIZE);
+    <span class="tok-k">if</span> (cnt &lt;= <span class="tok-n">0</span>) <span class="tok-k">return</span>;
+
+    <span class="tok-k">if</span> (tid == <span class="tok-n">0</span>) {              <span class="tok-c">// 只有 0 号 painter 累计完成数</span>
+        completed_task_cnt += cnt;
+        <span class="tok-k">if</span> (completed_task_cnt &gt;= total_task_cnt)  <span class="tok-c">// 全图完成 → 广播退出</span>
+            <span class="tok-f">atomic_store</span>(&amp;g_is_done.v, <span class="tok-k">true</span>);
+    }
+    <span class="tok-f">resolve_dep</span>(tid, cnt, cq, rq_buf, ready_cnt);  <span class="tok-c">// 遍历后继、递减前驱数、产出就绪</span>
+    <span class="tok-f">completed_queue_read_commit</span>(&amp;g_completed_queue, tid, cnt);  <span class="tok-c">// 推进读游标</span>
+    <span class="tok-f">send_2_ready_queue</span>(ready_cnt, rq_buf);      <span class="tok-c">// 就绪任务批量入队</span>
+}</pre>
+    </div></details>
+
+    <h3>③ Dispatch 线程 <span class="tag">dispatch_worker()</span></h3>
+    <p>Dispatch 是「就绪任务的消费者 + 完成事件的生产者」。真机上先与硬件握手，模拟模式下这段基本是空操作。</p>
+<pre><span class="tok-k">void</span> *<span class="tok-f">dispatch_worker</span>(<span class="tok-k">void</span> *arg) {
+    <span class="tok-k">int</span> tid = (<span class="tok-k">int</span>)(<span class="tok-k">intptr_t</span>)arg;
+    <span class="tok-k">for</span> (i...) { <span class="tok-f">hand_shake</span>(tid, spr1[i], i, <span class="tok-n">0</span>);  <span class="tok-c">// 真机握手，模拟下为空</span>
+                 <span class="tok-f">hand_shake</span>(tid, spr2[i], i, <span class="tok-n">64</span>); }
+    <span class="tok-c">/* ... 启动屏障 ... */</span>
+    <span class="tok-k">bool</span> is_done = <span class="tok-k">false</span>;
+    <span class="tok-k">while</span> (!is_done) {
+        <span class="tok-f">dispatch</span>(tid);                  <span class="tok-c">// 一轮：回收完成 → 派发就绪</span>
+        is_done = <span class="tok-f">atomic_load</span>(&amp;g_is_done.v);
+    }
+}</pre>
+
+    <h3>dispatch(tid) 的三大步 <span class="tag">dispatch()</span></h3>
+<pre><span class="tok-k">int</span> <span class="tok-f">dispatch</span>(<span class="tok-k">int</span> tid) {
+    <span class="tok-f">read_msgq</span>(tid);                 <span class="tok-c">// ① 把 msg_bitmap 合并进 free_bitmap（完成核被释放）</span>
+    <span class="tok-f">push_2_completed_queue</span>(tid);   <span class="tok-c">// ② 扫 msg_bitmap 取出完成 task_id → 写入完成队列</span>
+    <span class="tok-f">send_task</span>(&amp;g_ctrl_t[tid], TASK_TYPE_MIX);     <span class="tok-c">// ③ 依次派发 MIX/VECTOR/CUBE</span>
+    <span class="tok-f">send_task</span>(&amp;g_ctrl_t[tid], TASK_TYPE_VECTOR);
+    <span class="tok-f">send_task</span>(&amp;g_ctrl_t[tid], TASK_TYPE_CUBE);
+}</pre>
+    <div class="callout pink">模拟 vs 真机的分界点在 <span class="inline-code">#ifdef REAL_CHIP</span>：模拟（默认）下 <span class="inline-code">send_task</span> 派发时<b>立即置位 msg_bitmap</b>（任务瞬间「完成」），因此下一轮 <span class="inline-code">read_msgq</span> 就能回收；真机则通过读写 AICORE 寄存器（<span class="inline-code">aicore_spr</span>、<span class="inline-code">READ_REG/WRITE_REG</span>）与硬件交互。</div>
+  </section>
+  <!-- ════════════════ 数据结构 ════════════════ -->
+  <section id="structs">
+    <h2>数据结构 <span class="en">Data Structures</span></h2>
+    <p class="lead">调度器的高性能来自两个设计：① 环形队列把「生产/消费」两侧的锁<b>拆开</b>；② 热共享原子<b>按缓存行（64B）对齐</b>以避免伪共享（false sharing）。</p>
+
+    <h3>就绪队列 <span class="tag">queue_t · MPSC</span></h3>
+    <p><span class="inline-code">g_ready_queue[TASK_TYPE_CNT]</span>（每个任务类型一个）。生产者（Painter）只碰 <span class="inline-code">tail</span>+<span class="inline-code">tail_lock</span>，消费者（Dispatch）只碰 <span class="inline-code">head</span>+<span class="inline-code">head_lock</span>，两侧互不阻塞。head/tail 是单调递增的 64 位计数，下标永远是 <span class="inline-code">counter &amp; (RQ_SIZE-1)</span>。</p>
+<pre><span class="tok-k">typedef struct</span> queue {
+    <span class="tok-c">/* consumer-owned */</span>
+    _Alignas(<span class="tok-n">64</span>) _Atomic <span class="tok-t">uint64_t</span> head;
+    _Alignas(<span class="tok-n">64</span>) atomic_flag head_lock;
+    <span class="tok-c">/* producer-owned */</span>
+    _Alignas(<span class="tok-n">64</span>) _Atomic <span class="tok-t">uint64_t</span> tail;
+    _Alignas(<span class="tok-n">64</span>) atomic_flag tail_lock;
+    <span class="tok-t">uint32_t</span> tasks[RQ_SIZE];   <span class="tok-c">// RQ_SIZE=4096</span>
+} queue_t;</pre>
+    <div class="callout">批量出入队 <span class="inline-code">batch_enqueue</span> / <span class="inline-code">batch_dequeue</span> 都支持<b>跨环形尾部回卷</b>（分两次 memcpy），并处理「满/空」快路径。锁是 <span class="inline-code">atomic_flag</span> 自旋锁（<span class="inline-code">test_and_set</span> + <span class="inline-code">seq_cst</span> fence）。</div>
+
+    <h3>完成队列 <span class="tag">completed_queue_t · MPMC</span></h3>
+    <p>多个 Dispatch 线程写、多个 Painter 线程读。<b>单一写者锁</b> <span class="inline-code">write_lock</span> 串行化写入；每个 Painter 有<b>独立的读游标</b> <span class="inline-code">read_pos[painter_tid]</span>。一条记录只有<b>所有</b> Painter 都读过后才允许被覆盖。</p>
+<pre><span class="tok-k">typedef struct</span> {
+    <span class="tok-t">uint32_t</span> ring[CQ_SIZE];                 <span class="tok-c">// CQ_SIZE=4096</span>
+    cacheline_u64_t write_pos;                <span class="tok-c">// dispatcher 写</span>
+    cacheline_u64_t read_pos[PAINTER_THREAD_CNT];  <span class="tok-c">// 每 painter 一行</span>
+    cacheline_flag_t write_lock;              <span class="tok-c">// 串行化写者</span>
+} completed_queue_t;</pre>
+    <div class="callout ok">零拷贝读：<span class="inline-code">completed_queue_read_batch</span> 直接返回指向 ring 的指针（不复制），并 clamp 到环形物理边界保证连续；消费完再 <span class="inline-code">read_commit</span> 推进游标。</div>
+
+    <h3>Dispatch 控制块 <span class="tag">ctrl_t</span></h3>
+    <p>每个 Dispatch 线程一个 <span class="inline-code">g_ctrl_t[tid]</span>，描述它「拥有」哪些核、哪些核空闲、哪些任务在跑。</p>
+<pre><span class="tok-k">typedef struct</span> ctrl {
+    <span class="tok-t">uint64_t</span> free_bitmap[TASK_TYPE_CNT][<span class="tok-n">2</span>];  <span class="tok-c">// bit=1 → 该核/slot 空闲（每核 2 个 slot）</span>
+    <span class="tok-t">uint64_t</span> msg_bitmap[EXE_TYPE_CNT][<span class="tok-n">2</span>];   <span class="tok-c">// bit=1 → 任务已完成（模拟下派发即置位）</span>
+    <span class="tok-t">uint64_t</span> aicore_mask;                    <span class="tok-c">// 本线程拥有的核掩码（默认 60 个核）</span>
+    <span class="tok-t">uint32_t</span> task_id_map1[EXE_TYPE_CNT][<span class="tok-n">64</span>]; <span class="tok-c">// 核/slot → 正在执行的 task_id</span>
+    <span class="tok-t">uint32_t</span> task_id_map2[EXE_TYPE_CNT][<span class="tok-n">64</span>];
+    <span class="tok-t">uint64_t</span>* aicore_spr_1/2[EXE_TYPE_CNT][<span class="tok-n">64</span>]; <span class="tok-c">// 真机寄存器地址</span>
+    <span class="tok-t">uint32_t</span> tid;
+} ctrl_t;</pre>
+    <div class="callout">「每核 2 slot」：<span class="inline-code">AIC_OSTD=2</span> 意味着每个 AI 核可同时驻留 2 个任务（slot 0 / slot 1）。<span class="inline-code">send_task</span> 优先用 slot 0，忙则用 slot 1，用 <span class="inline-code">free_bitmap[type][slot]</span> 记录占用。</div>
+
+    <h3>关键常量 <span class="tag">conf.h</span></h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>宏</th><th>值</th><th>含义</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">CACHE_LINE_SIZE</td><td class="num">64</td><td>缓存行对齐，避免伪共享</td></tr>
+        <tr><td class="mono">AIC_CNT</td><td class="num">64</td><td>AI 核总数</td></tr>
+        <tr><td class="mono">AIC_OSTD</td><td class="num">2</td><td>每核 slot 数（并发驻留任务数）</td></tr>
+        <tr><td class="mono">AIC_CNT_PER_THREAD</td><td class="num">60</td><td>每个 Dispatch 线程拥有的核数</td></tr>
+        <tr><td class="mono">AIC_CNT_PER_DIE</td><td class="num">32</td><td>每 die 核数（跨 die 地址偏移用）</td></tr>
+        <tr><td class="mono">EXE_TYPE_CNT</td><td class="num">2</td><td>执行类型数（CUBE / VECTOR）</td></tr>
+        <tr><td class="mono">RQ_SIZE / RQ_BATCH_SIZE</td><td class="num">4096 / 512</td><td>就绪队列容量 / 批量大小</td></tr>
+        <tr><td class="mono">CQ_SIZE / CQ_BATCH_SIZE</td><td class="num">4096 / 512</td><td>完成队列容量 / 批量大小</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>任务类型 <span class="tag">task.h</span></h3>
+<pre><span class="tok-k">typedef enum</span> {
+    TASK_TYPE_CUBE   = <span class="tok-n">0</span>,   <span class="tok-c">// 矩阵/卷积类算子</span>
+    TASK_TYPE_VECTOR = <span class="tok-n">1</span>,   <span class="tok-c">// 向量类算子</span>
+    TASK_TYPE_MIX    = <span class="tok-n">1</span>,   <span class="tok-c">// ⚠ 与 VECTOR 同值！</span>
+    TASK_TYPE_CNT    = <span class="tok-n">2</span>,
+} task_type_t;</pre>
+  </section>
+  <!-- ════════════════ 核心算法 ════════════════ -->
+  <section id="algo">
+    <h2>核心算法 <span class="en">Core Algorithms</span></h2>
+    <p class="lead">四个关键函数串起整个调度：初始入队、依赖解析、位图派发、完成回收。核心思想是「<b>前驱计数递减 + 位图状态机 + 批量操作</b>」。</p>
+
+    <h3>① 初始入队 <span class="tag">init_queue()</span></h3>
+    <p>扫描全局任务表，把所有「入度 = 0」的任务按类型放入对应就绪队列。</p>
+<pre><span class="tok-k">for</span> (i...) {
+    task_id = total_task_id[i];
+    <span class="tok-k">if</span> (test_graph[<span class="tok-n">0</span>].total_pre_cnt[task_id] &lt;= <span class="tok-n">0</span>) {   <span class="tok-c">// 无前驱</span>
+        type = total_type[task_id];
+        idx  = <span class="tok-f">atomic_fetch_add</span>(&amp;g_ready_queue[type].tail, <span class="tok-n">1</span>);
+        g_ready_queue[type].tasks[idx] = task_id;
+    }
+}</pre>
+
+    <h3>② 依赖解析 <span class="tag">resolve_dep()</span></h3>
+    <p>对每个完成的任务，遍历它的后继（<span class="inline-code">successors[]</span>），把后继的 <span class="inline-code">total_pre_cnt</span> 减一；一旦归零，该后继就「就绪」，收集到 <span class="inline-code">rq_buf</span> 待批量入队。</p>
+<pre><span class="tok-k">void</span> <span class="tok-f">resolve_dep</span>(tid, cnt, cq_buf, rq_buf, ready_cnt) {
+    <span class="tok-k">for</span> (j &lt; cnt) {
+        task_id = cq_buf[j];                     <span class="tok-c">// 一个已完成任务</span>
+        succ_cnt = test_graph[tid].suc_cnt[task_id];
+        idx = test_graph[tid].suc_idx[task_id];  <span class="tok-c">// 后继在 successors[] 的起始下标</span>
+        <span class="tok-k">for</span> (k = idx; k &lt; idx + succ_cnt; k++) {
+            succ_id = test_graph[tid].successors[k];
+            test_graph[tid].total_pre_cnt[succ_id]--;   <span class="tok-c">// 前驱数 -1</span>
+            <span class="tok-k">if</span> (total_pre_cnt[succ_id] &lt; <span class="tok-n">1</span>) {          <span class="tok-c">// 全部前驱已完成</span>
+                rq_buf[type][ready_cnt[type]++] = succ_id; <span class="tok-c">// 就绪，待入队</span>
+            }
+        }
+    }
+}</pre>
+    <div class="callout">图的存储用 <b>CSR（压缩行）</b>风格：<span class="inline-code">suc_idx[task]</span> 记录起始偏移、<span class="inline-code">suc_cnt[task]</span> 记录后继个数、<span class="inline-code">successors[]</span> 是一维扁平数组，遍历高效且缓存友好。</div>
+
+    <h3>③ 位图派发 <span class="tag">send_task()</span></h3>
+    <p>先算「完全空闲」的核（两个 slot 都空：<span class="inline-code">free_bitmap[0] &amp; free_bitmap[1]</span>），再从就绪队列取等量任务，用 <span class="inline-code">__builtin_ctzll</span> 找最低空闲位，逐个绑定核与 slot。</p>
+<pre><span class="tok-t">uint64_t</span> free = (free_bitmap[type][<span class="tok-n">0</span>] &amp; free_bitmap[type][<span class="tok-n">1</span>]) &amp; aicore_mask;
+<span class="tok-k">int</span> demand = <span class="tok-f">__builtin_popcountll</span>(free);   <span class="tok-c">// 可派发的核数</span>
+<span class="tok-f">batch_dequeue</span>(&amp;g_ready_queue[type], ids, &amp;got);  <span class="tok-c">// 取 min(需求, 队列量)</span>
+<span class="tok-k">for</span> (each task) {
+    idx  = <span class="tok-f">__builtin_ctzll</span>(free);            <span class="tok-c">// 最低空闲核</span>
+    slot = (free_bitmap[type][<span class="tok-n">0</span>] &amp; mask) ? <span class="tok-n">0</span> : <span class="tok-n">1</span>;  <span class="tok-c">// 优先 slot 0</span>
+    task_id_map[type][idx] = task_id;      <span class="tok-c">// 记录核上任务</span>
+    free_bitmap[type][slot] &amp;= ~mask;        <span class="tok-c">// 标记占用</span>
+    <span class="tok-c">#ifndef REAL_CHIP</span>
+    msg_bitmap[type][slot] |= mask;         <span class="tok-c">// 模拟：立即标记完成</span>
+    <span class="tok-c">#endif</span>
+}</pre>
+
+    <h3>④ 完成回收 <span class="tag">read_msgq / push_2_completed_queue</span></h3>
+    <p>一轮派发的开头，先把上一轮「已完成」的位图合并回空闲位图（释放核），再扫描完成位图取出 task_id 写入完成队列。</p>
+<pre><span class="tok-c">// read_msgq: 完成核被释放</span>
+free_bitmap[i][j] |= msg_bitmap[i][j];
+<span class="tok-c">// get_completed: 逐位 ctz 取出完成 task_id</span>
+<span class="tok-k">while</span> (cnt--) {
+    idx = <span class="tok-f">__builtin_ctzll</span>(*bitmap);
+    task_id[complete_cnt++] = task_id_map[idx];
+    *bitmap &amp;= (*bitmap - <span class="tok-n">1</span>);   <span class="tok-c">// 清最低位</span>
+}</pre>
+
+    <h3>终止条件 <span class="tag">termination</span></h3>
+    <p>0 号 Painter 是唯一累计完成数、判定全图完成的线程：<span class="inline-code">completed_task_cnt &gt;= total_task_cnt</span> 时写 <span class="inline-code">g_is_done = true</span>，所有线程下一轮检查后退出。之所以只让 0 号做，是避免多 painter 并发累加造成竞态或重复判定。</p>
+  </section>
+  <!-- ════════════════ 构建与运行 ════════════════ -->
+  <section id="build">
+    <h2>构建与运行 <span class="en">Build &amp; Run</span></h2>
+    <p class="lead">提供两套构建入口：<span class="inline-code">Makefile</span>（单用例）与 <span class="inline-code">build_all.sh</span>（批量构建所有用例）。用例以<b>头文件形式编译进二进制</b>，通过编译期宏选择。</p>
+
+    <h3>Makefile 用法</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>命令</th><th>作用</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">make</td><td>构建 <span class="inline-code">./scheduler</span>（默认 subgraph 用例）</td></tr>
+        <tr><td class="mono">make run</td><td>构建并运行</td></tr>
+        <tr><td class="mono">make LOG=1</td><td>开启 worker 日志（<span class="inline-code">WORKER_LOG=1</span>）</td></tr>
+        <tr><td class="mono">make CASE=total_graph</td><td>切换为 total_graph 用例（单 painter）</td></tr>
+        <tr><td class="mono">make clean</td><td>清理产物</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>核心编译参数（<span class="inline-code">CPPFLAGS</span>）注入三个宏：</p>
+<pre>-DSCHEDULER_CASE=cases/&lt;name&gt;.h   <span class="tok-c">// 选择 DAG 用例（被 painter.h stringize 后 #include）</span>
+-DPAINTER_THREAD_CNT=&lt;n&gt;        <span class="tok-c">// painter 线程数</span>
+-DWORKER_LOG=&lt;0|1&gt;              <span class="tok-c">// 日志开关</span></pre>
+
+    <h3>build_all.sh</h3>
+    <p>遍历 <span class="inline-code">cases/*.h</span>，为每个用例 × 每个 dispatch 线程数（默认 <span class="inline-code">1 2</span>）各生成一个二进制到 <span class="inline-code">bin/</span>；painter 线程数从用例头文件的注释 <span class="inline-code">PAINTER_THREAD_CNT=N</span> 自动提取。</p>
+<pre>./build_all.sh              <span class="tok-c"># 构建所有用例</span>
+./build_all.sh fg_t480_p4_l8_c4_d5   <span class="tok-c"># 只构建指定用例</span>
+./build_all.sh clean        <span class="tok-c"># 清理 bin/</span>
+CLEAN=1 ./build_all.sh      <span class="tok-c"># 先清理再全部重建</span></pre>
+
+    <h3>用例文件 <span class="tag">cases/</span></h3>
+    <p>每个 <span class="inline-code">.h</span> 是一份静态 DAG：</p>
+<pre><span class="tok-t">uint32_t</span> total_task_cnt = <span class="tok-n">3840</span>;
+<span class="tok-t">uint32_t</span> total_task_id[<span class="tok-n">3840</span>];     <span class="tok-c">// 全局任务 id</span>
+<span class="tok-k">char</span>     total_type[<span class="tok-n">3840</span>];     <span class="tok-c">// 0=CUBE, 1=VECTOR</span>
+<span class="tok-k">int</span>      total_pre_cnt[...];  <span class="tok-c">// 初始前驱数</span>
+<span class="tok-c">// 每个子图（对应一个 painter 线程）：</span>
+<span class="tok-k">typedef struct</span> subgraph {
+    task_cnt / task_id / pre_cnt / pre_idx / predecessors /
+    suc_cnt / suc_idx / successors / total_pre_cnt
+} subgraph;
+<span class="tok-k">static</span> subgraph test_graph[PAINTER_THREAD_CNT] = { ... };</pre>
+    <div class="grid2">
+      <div class="card"><b>合成用例</b>（<span class="inline-code">fg_t480_p*_l8_c*_d5</span>）由 <span class="inline-code">tools/gen_fake_graph.py</span> 生成：分层 DAG，参数 <span class="inline-code">-t</span> 每层任务数 / <span class="inline-code">-p</span> 每任务前驱数 / <span class="inline-code">-l</span> 链深 / <span class="inline-code">-c</span> 子图数。</div>
+      <div class="card"><b>真实用例</b>（<span class="inline-code">qwen3_14b_decode_*</span>）来自 Qwen3-14B 解码阶段的实际计算图，前驱关系从运行时 CSV 日志抓取。</div>
+    </div>
+
+    <h3>运行输出</h3>
+<pre>scheduler_throughput,<span class="tok-n">30.86</span>,MTasks/s   <span class="tok-c">// 0 号 painter 输出：总任务数 / 耗时 × 1000</span></pre>
+    <div class="callout ok">吞吐量 = <span class="inline-code">total_task_cnt × 1000 / elapsed_ns</span>（单位 MTasks/s），计时从「启动屏障后」到「全图完成」，是纯调度吞吐（模拟模式下任务执行时间为 0）。</div>
+  </section>
+  <!-- ════════════════ 性能数据 ════════════════ -->
+  <section id="bench">
+    <h2>性能数据 <span class="en">Benchmark</span></h2>
+    <p class="lead">数据来自 <span class="inline-code">doc/bench_report2.md</span>（Apple M5 / 10 核，每程序 5 次运行去极值取平均）。点击表头可排序。</p>
+
+    <div class="stats" id="bench-stats"></div>
+
+    <h3>吞吐排行 <span class="tag">sortable</span></h3>
+    <div class="table-wrap" id="bench-wrap">
+      <table id="bench-table">
+        <thead>
+          <tr>
+            <th class="sortable" data-k="rank">#</th>
+            <th class="sortable" data-k="name">程序</th>
+            <th data-k="type">类型</th>
+            <th class="sortable num" data-k="t">每层任务 t</th>
+            <th class="sortable num" data-k="p">前驱 p</th>
+            <th class="sortable num" data-k="l">链深 l</th>
+            <th class="sortable num" data-k="c">Painter c</th>
+            <th class="sortable num" data-k="d">派发线程</th>
+            <th class="sortable num" data-k="tasks">总任务数</th>
+            <th class="sortable num" data-k="tp">平均吞吐<br>(MTasks/s)</th>
+            <th>相对峰值</th>
+            <th>5 次原始吞吐</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h3>关键结论</h3>
+    <ul>
+      <li><b>前驱数 p 是最强负因子</b>：<span class="mono">p=0</span>（无依赖，纯并行）吞吐最高（216 MTasks/s），p 增大后依赖链变长、并行度下降，吞吐明显回落。</li>
+      <li><b>派发线程数 d</b> 在 p 较大时有增益（如 <span class="mono">p=4, c=6</span> 场景 d=2 略好），但 p=0 时反而因锁竞争略降。</li>
+      <li><b>真实图 qwen</b> 因拓扑更复杂、依赖更密，吞吐低于合成图（~48 vs 60+ MTasks/s）。</li>
+    </ul>
+    <div class="callout warn">注意：<span class="inline-code">total_graph</span> 两个程序（单 painter、未切分）出现死锁被跳过，未计入本表——这也是「按子图切分 + 多 painter」设计的动机之一。</div>
+  </section>
+</main>
+<footer>
+  <div class="wrap">
+    由代码静态分析自动生成 · 基于 <span class="inline-code">src/*.c</span> 与 <span class="inline-code">include/*.h</span> · 报告为自包含 HTML，可离线交互浏览。
+  </div>
+</footer>
+<script>
+/* ── Tab 切换 ── */
+const nav = document.getElementById('nav');
+const sections = [...document.querySelectorAll('main > section')];
+nav.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-t]');
+  if (!btn) return;
+  nav.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+  sections.forEach(s => s.classList.toggle('active', s.id === btn.dataset.t));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+/* ── 性能数据 ── */
+const DATA = [
+  {name:'fg_t480_p0_l8_c4_d5',       type:'syn', t:480,p:0,l:8,c:4,d:1,tasks:3840,tp:216.38,runs:[73.85,274.29,137.14,256.00,256.00]},
+  {name:'fg_t480_p0_l8_c4_d5_d2',    type:'syn', t:480,p:0,l:8,c:4,d:2,tasks:3840,tp:169.43,runs:[213.33,128.00,240.00,128.00,166.96]},
+  {name:'fg_t480_p0_l8_c6_d5',       type:'syn', t:480,p:0,l:8,c:6,d:1,tasks:3840,tp:81.49, runs:[78.37,89.30,76.80,75.29,213.33]},
+  {name:'fg_t480_p0_l8_c6_d5_d2',    type:'syn', t:480,p:0,l:8,c:6,d:2,tasks:3840,tp:162.12,runs:[98.46,109.71,202.11,213.33,174.55]},
+  {name:'fg_t480_p1_l8_c4_d5',       type:'syn', t:480,p:1,l:8,c:4,d:1,tasks:3840,tp:73.22, runs:[17.45,64.00,106.67,51.89,103.78]},
+  {name:'fg_t480_p1_l8_c4_d5_d2',    type:'syn', t:480,p:1,l:8,c:4,d:2,tasks:3840,tp:84.96, runs:[17.14,71.11,103.78,80.00,109.71]},
+  {name:'fg_t480_p1_l8_c6_d5',       type:'syn', t:480,p:1,l:8,c:6,d:1,tasks:3840,tp:82.35, runs:[9.28,75.29,65.08,106.67,109.71]},
+  {name:'fg_t480_p1_l8_c6_d5_d2',    type:'syn', t:480,p:1,l:8,c:6,d:2,tasks:3840,tp:70.26, runs:[10.35,71.11,89.30,71.11,68.57]},
+  {name:'fg_t480_p2_l8_c4_d5',       type:'syn', t:480,p:2,l:8,c:4,d:1,tasks:3840,tp:103.67,runs:[11.50,116.36,81.70,112.94,116.36]},
+  {name:'fg_t480_p2_l8_c4_d5_d2',    type:'syn', t:480,p:2,l:8,c:4,d:2,tasks:3840,tp:97.73, runs:[12.08,109.71,106.67,112.94,76.80]},
+  {name:'fg_t480_p2_l8_c6_d5',       type:'syn', t:480,p:2,l:8,c:6,d:1,tasks:3840,tp:75.92, runs:[10.52,73.85,68.57,85.33,87.27]},
+  {name:'fg_t480_p2_l8_c6_d5_d2',    type:'syn', t:480,p:2,l:8,c:6,d:2,tasks:3840,tp:60.69, runs:[9.62,60.95,58.18,64.00,62.95]},
+  {name:'fg_t480_p4_l8_c4_d5',       type:'syn', t:480,p:4,l:8,c:4,d:1,tasks:3840,tp:74.34, runs:[11.16,109.71,116.36,75.29,38.02]},
+  {name:'fg_t480_p4_l8_c4_d5_d2',    type:'syn', t:480,p:4,l:8,c:4,d:2,tasks:3840,tp:85.71, runs:[11.89,69.82,93.66,109.71,93.66]},
+  {name:'fg_t480_p4_l8_c6_d5',       type:'syn', t:480,p:4,l:8,c:6,d:1,tasks:3840,tp:69.96, runs:[8.77,96.00,69.82,66.21,73.85]},
+  {name:'fg_t480_p4_l8_c6_d5_d2',    type:'syn', t:480,p:4,l:8,c:6,d:2,tasks:3840,tp:66.38, runs:[8.22,62.95,65.08,72.45,71.11]},
+  {name:'fg_t480_p8_l8_c4_d5',       type:'syn', t:480,p:8,l:8,c:4,d:1,tasks:3840,tp:79.48, runs:[6.71,69.82,61.94,106.67,109.71]},
+  {name:'fg_t480_p8_l8_c4_d5_d2',    type:'syn', t:480,p:8,l:8,c:4,d:2,tasks:3840,tp:78.33, runs:[5.84,98.46,51.20,106.67,85.33]},
+  {name:'fg_t480_p8_l8_c6_d5',       type:'syn', t:480,p:8,l:8,c:6,d:1,tasks:3840,tp:80.47, runs:[7.68,83.48,96.00,61.94,101.05]},
+  {name:'fg_t480_p8_l8_c6_d5_d2',    type:'syn', t:480,p:8,l:8,c:6,d:2,tasks:3840,tp:74.05, runs:[6.81,66.21,72.45,89.30,83.48]},
+  {name:'qwen3_14b_decode_subgraph', type:'real',t:null,p:null,l:null,c:2,d:1,tasks:864,tp:48.65,runs:[4.65,54.00,41.14,54.00,50.82]},
+  {name:'qwen3_14b_decode_subgraph_d2',type:'real',t:null,p:null,l:null,c:2,d:2,tasks:864,tp:46.65,runs:[2.95,50.82,41.14,48.00,50.82]},
+];
+/* ── 渲染与排序 ── */
+const TYPE_LABEL = {syn:['合成 DAG','syn'], real:['qwen 真实图','real']};
+const maxTp = Math.max(...DATA.map(d => d.tp));
+let sortKey = 'tp', sortDir = -1;
+
+function renderStats(){
+  const el = document.getElementById('bench-stats');
+  const syn = DATA.filter(d => d.type==='syn');
+  const real = DATA.filter(d => d.type==='real');
+  el.innerHTML = `
+    <div class="stat"><div class="num">${DATA.length}</div><div class="lbl">测试程序数</div></div>
+    <div class="stat"><div class="num">${maxTp.toFixed(2)}</div><div class="lbl">峰值吞吐 (MTasks/s)</div></div>
+    <div class="stat"><div class="num">${syn.length}</div><div class="lbl">合成 DAG 用例</div></div>
+    <div class="stat"><div class="num">${real.length}</div><div class="lbl">qwen 真实图用例</div></div>
+    <div class="stat"><div class="num">${Math.min(...DATA.map(d=>d.tp)).toFixed(2)}</div><div class="lbl">最低吞吐 (MTasks/s)</div></div>`;
+}
+
+function renderTable(){
+  const tbody = document.querySelector('#bench-table tbody');
+  const arr = [...DATA].sort((a,b) => {
+    let x = a[sortKey], y = b[sortKey];
+    if (x == null) x = -1;
+    if (y == null) y = -1;
+    if (sortKey === 'name' || sortKey === 'type') return String(x).localeCompare(String(y)) * sortDir;
+    return (x - y) * sortDir;
+  });
+  const rank = new Map();
+  [...DATA].sort((a,b)=>b.tp-a.tp).forEach((d,i)=>rank.set(d.name,i+1));
+  tbody.innerHTML = arr.map(d => {
+    const [tl, cls] = TYPE_LABEL[d.type];
+    const pct = (d.tp / maxTp * 100).toFixed(1);
+    return `<tr>
+      <td class="num mono">${rank.get(d.name)}</td>
+      <td class="mono">${d.name}</td>
+      <td><span class="pill ${cls}">${tl}</span></td>
+      <td class="num">${d.t==null?'–':d.t}</td>
+      <td class="num">${d.p==null?'–':d.p}</td>
+      <td class="num">${d.l==null?'–':d.l}</td>
+      <td class="num">${d.c}</td>
+      <td class="num">${d.d}</td>
+      <td class="num">${d.tasks}</td>
+      <td class="num"><b>${d.tp.toFixed(2)}</b></td>
+      <td style="min-width:140px"><div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div></td>
+      <td class="num mono" style="color:var(--muted)">${d.runs.map(r=>r.toFixed(2)).join(', ')}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.querySelectorAll('#bench-table th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const k = th.dataset.k;
+    if (sortKey === k) sortDir = -sortDir;
+    else { sortKey = k; sortDir = (k==='name'||k==='type') ? 1 : -1; }
+    document.querySelectorAll('#bench-table th.sortable .arrow').forEach(a=>a.remove());
+    th.insertAdjacentHTML('beforeend', '<span class="arrow">' + (sortDir>0?' ▲':' ▼') + '</span>');
+    renderTable();
+  });
+});
+const defTh = document.querySelector('#bench-table th[data-k="tp"]');
+defTh.insertAdjacentHTML('beforeend','<span class="arrow"> ▼</span>');
+
+renderStats();
+renderTable();
+</script>
+</body>
+</html>

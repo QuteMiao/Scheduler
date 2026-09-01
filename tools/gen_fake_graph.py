@@ -7,7 +7,7 @@
 """
 Generate a synthetic DAG subgraph header file in the same shape as
 cases/fg_t480_p4_l4_c4_d5.h (global total_task_id/total_type/total_duration/
-total_pre_cnt plus per-subgraph task_id/pre_idx/predecessors and
+total_pre_cnt/total_task_state plus per-subgraph task_id/pre_idx/predecessors and
 suc_cnt/suc_idx/successors).
 
 Parameters:
@@ -250,6 +250,7 @@ def generate_header(args: argparse.Namespace) -> str:
     total_type_vals = [0] * total_cnt
     total_duration_vals = [0] * total_cnt
     total_pre_cnt_vals = [0] * total_cnt
+    total_task_state_vals = [0] * total_cnt
     for group in groups:
         for i, tid in enumerate(group["task_id"]):
             pos = id_to_pos[tid]
@@ -281,6 +282,7 @@ def generate_header(args: argparse.Namespace) -> str:
     lines.append("/* total_pre_cnt[] is decremented by every painter thread at runtime;")
     lines.append(" * keep it on its own 64-byte cache line to avoid false sharing. */")
     lines.append(f"static _Alignas(CACHE_LINE_SIZE) int total_pre_cnt[{task_cnt}] = {{{_array_body(total_pre_cnt_vals)}}};")
+    lines.append(f"static char total_task_state[{task_cnt}] = {{{_array_body(total_task_state_vals)}}};")
     lines.append("")
 
     # Per-subgraph arrays.

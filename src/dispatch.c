@@ -18,6 +18,7 @@ ctrl_t g_ctrl_t[DISPATCH_THREAD_CNT];
 
 /* Global, thread-shared queues (single instance for the whole scheduler). */
 queue_t g_ready_queue[TASK_TYPE_CNT];
+queue_t g_near_ready_queue[TASK_TYPE_CNT];
 completed_queue_t g_completed_queue;
 
 static void init_global_queues(void)
@@ -26,7 +27,12 @@ static void init_global_queues(void)
         memset(&g_ready_queue[i], 0, sizeof(queue_t));
         atomic_flag_clear_explicit(&g_ready_queue[i].head_lock, memory_order_release);
         atomic_flag_clear_explicit(&g_ready_queue[i].tail_lock, memory_order_release);
+
+        memset(&g_near_ready_queue[i], 0, sizeof(queue_t));
+        atomic_flag_clear_explicit(&g_near_ready_queue[i].head_lock, memory_order_release);
+        atomic_flag_clear_explicit(&g_near_ready_queue[i].tail_lock, memory_order_release);
     }
+
     memset(&g_completed_queue, 0, sizeof(completed_queue_t));
     atomic_flag_clear_explicit(&g_completed_queue.write_lock.v, memory_order_release);
     atomic_store_explicit(&g_completed_queue.write_pos.v, 0, memory_order_release);
@@ -37,8 +43,6 @@ static void init_global_queues(void)
 
 void init_ctrl_t(void)
 {
-    init_global_queues();
-
     for (int tid = 0; tid < DISPATCH_THREAD_CNT; tid++) {
         g_ctrl_t[tid].tid = (uint32_t)tid;
         if (AIC_CNT_PER_THREAD >= 64) {
@@ -170,7 +174,7 @@ static inline void push_2_completed_queue(int tid)
     completed_queue_write_batch(&g_completed_queue, task_id, (uint32_t)complete_cnt);
 }
 
-static inline int send_task(ctrl_t *ctrl, int type)
+static inline int send_task(ctrl_t *ctrl, queue_t *ready_queue, int type)
 {
     // Check both slots - slot is free if neither slot 0 nor slot 1 has been sent a task.
     // Mask with this die's aicore_mask so ctz stays within owned cores.
@@ -182,7 +186,7 @@ static inline int send_task(ctrl_t *ctrl, int type)
     }
     uint32_t task_ids[AIC_CNT];
     uint32_t got = (uint32_t)free_demand;
-    if (!batch_dequeue(&g_ready_queue[type], task_ids, &got)) {
+    if (!batch_dequeue(ready_queue, task_ids, &got)) {
         return 0;
     }
 
@@ -229,9 +233,9 @@ int dispatch(int tid)
     int total_sent = 0;
     read_msgq(tid);
     push_2_completed_queue(tid);
-    total_sent += send_task(&g_ctrl_t[tid], TASK_TYPE_MIX);
-    total_sent += send_task(&g_ctrl_t[tid], TASK_TYPE_VECTOR);
-    total_sent += send_task(&g_ctrl_t[tid], TASK_TYPE_CUBE);
+    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_MIX], TASK_TYPE_MIX);
+    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_VECTOR], TASK_TYPE_VECTOR);
+    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE);
     return total_sent;
 }
 

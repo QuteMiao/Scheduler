@@ -55,8 +55,9 @@ int main(void) {
     log_init("scheduler");
 #endif
 
+    init_global_queues();
     init_ctrl_t();
-    init_ready_queue();
+    init_queue();
     WORKER_LOGF("painter_cnt,%d,dispatcher_cnt,%d", PAINTER_THREAD_CNT, DISPATCH_THREAD_CNT);
     /* Register signal handlers for graceful shutdown on Ctrl+C */
     signal(SIGINT, handle_signal);

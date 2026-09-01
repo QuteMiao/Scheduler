@@ -30,16 +30,18 @@ void send_2_ready_queue(uint32_t ready_cnt[], uint32_t rq_buf[][RQ_BATCH_SIZE]) 
     }
 }
 
-void init_ready_queue(void)
+void init_queue(void)
 {
-    uint32_t idx = 0;
     for (uint32_t i = 0; i < total_task_cnt; i++) {
         uint32_t task_id = total_task_id[i];
-        if (test_graph[0].total_pre_cnt[task_id] <= 0) {
-            task_type_t type = (task_type_t)total_type[task_id];
-            idx = (uint32_t)atomic_fetch_add_explicit(&g_ready_queue[type].tail, 1, memory_order_relaxed);
-            g_ready_queue[type].tasks[idx] = task_id;
-        }
+        int pre_cnt = test_graph[0].total_pre_cnt[task_id];
+        if (pre_cnt > 1) continue;
+
+        queue_t *queue = (pre_cnt == 0) ? g_ready_queue : g_near_ready_queue;
+        task_type_t type = (task_type_t)total_type[task_id];
+        total_task_state[task_id] = 1;
+        uint32_t idx = (uint32_t)atomic_fetch_add_explicit(&queue[type].tail, 1, memory_order_relaxed);
+        queue[type].tasks[idx] = task_id;
     }
 }
 

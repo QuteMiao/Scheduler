@@ -52,6 +52,7 @@ typedef struct ctrl {
 
 /* Global, thread-shared queues (single instance for the whole scheduler). */
 extern queue_t g_ready_queue[TASK_TYPE_CNT];
+extern queue_t g_near_ready_queue[TASK_TYPE_CNT];
 extern completed_queue_t g_completed_queue;
 
 void *dispatch_worker(void *arg);
