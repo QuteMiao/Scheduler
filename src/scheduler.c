@@ -23,9 +23,10 @@ uint64_t get_time_ns(void)
     return (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
 }
 
-/* Global variable definitions needed by dispatch.c and painter.c */
-atomic_bool g_is_done = false;
-atomic_int g_start_barrier = 0;
+/* Global variable definitions needed by dispatch.c and painter.c.
+ * Each hot shared atomic owns a private 64-byte cache line (see conf.h). */
+cacheline_bool_t g_is_done = { false };
+cacheline_int_t g_start_barrier = { 0 };
 
 #define TASK_EXEC_RECORDS_MAX 8192
 
@@ -43,7 +44,7 @@ task_exec_record_t g_task_exec_records[TASK_EXEC_RECORDS_MAX];
 static void handle_signal(int sig)
 {
     (void)sig;
-    atomic_store_explicit(&g_is_done, true, memory_order_release);
+    atomic_store_explicit(&g_is_done.v, true, memory_order_release);
 }
 
 int main(void) {

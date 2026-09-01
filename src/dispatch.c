@@ -12,7 +12,7 @@
 #include "log.h"
 #include "a6.h"
 
-extern atomic_bool g_is_done;
+extern cacheline_bool_t g_is_done;
 
 ctrl_t g_ctrl_t[DISPATCH_THREAD_CNT];
 
@@ -27,10 +27,10 @@ static void init_global_queues(void)
         atomic_flag_clear_explicit(&g_ready_queue[i].lock, memory_order_release);
     }
     memset(&g_completed_queue, 0, sizeof(completed_queue_t));
-    atomic_flag_clear_explicit(&g_completed_queue.write_lock, memory_order_release);
-    atomic_store_explicit(&g_completed_queue.write_pos, 0, memory_order_release);
+    atomic_flag_clear_explicit(&g_completed_queue.write_lock.v, memory_order_release);
+    atomic_store_explicit(&g_completed_queue.write_pos.v, 0, memory_order_release);
     for (int p = 0; p < PAINTER_THREAD_CNT; p++) {
-        atomic_store_explicit(&g_completed_queue.read_pos[p], 0, memory_order_release);
+        atomic_store_explicit(&g_completed_queue.read_pos[p].v, 0, memory_order_release);
     }
 }
 
@@ -248,17 +248,17 @@ void *dispatch_worker(void *arg)
         hand_shake(tid, g_ctrl_t[tid].aicore_spr_2[i], i, 64);
     }
 
-    int cnt = atomic_fetch_add(&g_start_barrier, 1);
+    int cnt = atomic_fetch_add(&g_start_barrier.v, 1);
 
     while (cnt < (DISPATCH_THREAD_CNT + PAINTER_THREAD_CNT))
     {
-        cnt = atomic_load(&g_start_barrier);
+        cnt = atomic_load(&g_start_barrier.v);
     }
 
     bool is_done = false;
     while (!is_done) {
         total_sent += dispatch(tid);
-        is_done = atomic_load(&g_is_done);
+        is_done = atomic_load(&g_is_done.v);
     }
     WORKER_LOGF("dispatch,%d,done", tid);
     return NULL;

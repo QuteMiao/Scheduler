@@ -3,8 +3,18 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
-extern atomic_int g_start_barrier;
+/* Cache line size: hot shared atomics are aligned to and padded to a full
+ * 64-byte cache line so each one owns a private line (avoids false sharing). */
+#define CACHE_LINE_SIZE 64
+
+typedef struct { _Alignas(CACHE_LINE_SIZE) atomic_bool   v; } cacheline_bool_t;
+typedef struct { _Alignas(CACHE_LINE_SIZE) atomic_int    v; } cacheline_int_t;
+typedef struct { _Alignas(CACHE_LINE_SIZE) _Atomic uint64_t v; } cacheline_u64_t;
+typedef struct { _Alignas(CACHE_LINE_SIZE) atomic_flag   v; } cacheline_flag_t;
+
+extern cacheline_int_t g_start_barrier;
 
 #define AIC_OSTD 2
 #define AIC_CNT 64
@@ -25,7 +35,7 @@ extern atomic_int g_start_barrier;
 #ifndef DISPATCH_THREAD_CNT
 #define DISPATCH_THREAD_CNT 1
 #endif
-#define AIC_CNT_PER_THREAD 32
+#define AIC_CNT_PER_THREAD 60
 
 /* Compile-time switch: 1 = compile in WORKER_LOGF() worker logging, 0 = strip it out.
  * Default is 0 (off); enable with `make LOG=1` or -DWORKER_LOG=1. */

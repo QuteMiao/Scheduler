@@ -29,9 +29,9 @@
  */
 typedef struct {
     uint32_t ring[CQ_SIZE];
-    _Atomic uint64_t write_pos;
-    _Atomic uint64_t read_pos[PAINTER_THREAD_CNT];
-    atomic_flag write_lock;
+    cacheline_u64_t write_pos;                    /* written by dispatchers, read by all painters */
+    cacheline_u64_t read_pos[PAINTER_THREAD_CNT]; /* one private cache line per painter */
+    cacheline_flag_t write_lock;                  /* serializes writers */
 } completed_queue_t;
 
 typedef struct ctrl {
@@ -62,38 +62,54 @@ void init_ctrl_t(void);
 static inline void completed_queue_write_batch(completed_queue_t *q, uint32_t *items, uint32_t cnt)
 {
     if (cnt == 0) return;
-    while (atomic_flag_test_and_set_explicit(&q->write_lock, memory_order_acquire)) {
+    while (atomic_flag_test_and_set_explicit(&q->write_lock.v, memory_order_acquire)) {
         atomic_thread_fence(memory_order_seq_cst);
     }
-    uint64_t wpos = atomic_load_explicit(&q->write_pos, memory_order_relaxed);
+    uint64_t wpos = atomic_load_explicit(&q->write_pos.v, memory_order_relaxed);
     uint32_t *ring = q->ring;
     for (uint32_t i = 0; i < cnt; i++) {
         ring[(wpos + i) & CQ_MASK] = items[i];
     }
-    atomic_store_explicit(&q->write_pos, wpos + cnt, memory_order_release);
-    atomic_flag_clear_explicit(&q->write_lock, memory_order_release);
+    atomic_store_explicit(&q->write_pos.v, wpos + cnt, memory_order_release);
+    atomic_flag_clear_explicit(&q->write_lock.v, memory_order_release);
 }
 
-/* Batch-read from the shared multi-reader ring buffer for a specific painter.
- * Returns the number of items actually read (0 if nothing new). */
-static inline uint32_t completed_queue_read_batch(completed_queue_t *q, int painter_tid,
-                                                   uint32_t *buf, uint32_t max_cnt)
+/* Zero-copy batch-read from the shared multi-reader ring buffer for a specific
+ * painter. Returns a pointer to up to max_cnt contiguous items sitting at this
+ * painter's read cursor (no copy), and stores the actual count in *cnt.
+ *
+ * The read cursor is NOT advanced here - call completed_queue_read_commit()
+ * once the returned items have been consumed. The batch is clamped so it never
+ * wraps past the end of the ring, keeping the returned range contiguous.
+ * Returns NULL when nothing new is available. */
+static inline const uint32_t *completed_queue_read_batch(completed_queue_t *q, int painter_tid,
+                                                         uint32_t *cnt, uint32_t max_cnt)
 {
-    _Atomic uint64_t *my_read = &q->read_pos[painter_tid];
+    _Atomic uint64_t *my_read = &q->read_pos[painter_tid].v;
     uint64_t rpos = atomic_load_explicit(my_read, memory_order_acquire);
-    uint64_t wpos = atomic_load_explicit(&q->write_pos, memory_order_acquire);
+    uint64_t wpos = atomic_load_explicit(&q->write_pos.v, memory_order_acquire);
 
     uint64_t avail = wpos - rpos;
-    if (avail <= 0) return 0;
-
-    uint32_t cnt = (uint32_t)(avail < max_cnt ? avail : max_cnt);
-    uint32_t *ring = q->ring;
-    for (uint32_t i = 0; i < cnt; i++) {
-        buf[i] = ring[(rpos + i) & CQ_MASK];
+    if (avail <= 0) {
+        *cnt = 0;
+        return NULL;
     }
 
-    atomic_store_explicit(my_read, rpos + cnt, memory_order_release);
-    return cnt;
+    uint32_t n = (uint32_t)(avail < max_cnt ? avail : max_cnt);
+
+    /* Clamp to the physical end of the ring so the returned range is contiguous. */
+    uint32_t span = CQ_SIZE - (uint32_t)(rpos & CQ_MASK);
+    if (n > span) n = span;
+
+    *cnt = n;
+    return &q->ring[rpos & CQ_MASK];
+}
+
+/* Advance a painter's read cursor after a zero-copy batch has been consumed. */
+static inline void completed_queue_read_commit(completed_queue_t *q, int painter_tid, uint32_t cnt)
+{
+    if (cnt == 0) return;
+    atomic_fetch_add_explicit(&q->read_pos[painter_tid].v, (uint64_t)cnt, memory_order_release);
 }
 
 #endif /* SCHEDULER_DISPATCH_H */
