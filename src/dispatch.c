@@ -24,7 +24,8 @@ static void init_global_queues(void)
 {
     for (int i = 0; i < TASK_TYPE_CNT; i++) {
         memset(&g_ready_queue[i], 0, sizeof(queue_t));
-        atomic_flag_clear_explicit(&g_ready_queue[i].lock, memory_order_release);
+        atomic_flag_clear_explicit(&g_ready_queue[i].head_lock, memory_order_release);
+        atomic_flag_clear_explicit(&g_ready_queue[i].tail_lock, memory_order_release);
     }
     memset(&g_completed_queue, 0, sizeof(completed_queue_t));
     atomic_flag_clear_explicit(&g_completed_queue.write_lock.v, memory_order_release);

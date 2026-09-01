@@ -37,8 +37,7 @@ void init_ready_queue(void)
         uint32_t task_id = total_task_id[i];
         if (test_graph[0].total_pre_cnt[task_id] <= 0) {
             task_type_t type = (task_type_t)total_type[task_id];
-            idx = g_ready_queue[type].tail++;
-            g_ready_queue[type].cnt++;
+            idx = (uint32_t)atomic_fetch_add_explicit(&g_ready_queue[type].tail, 1, memory_order_relaxed);
             g_ready_queue[type].tasks[idx] = task_id;
         }
     }
@@ -81,7 +80,8 @@ void deal_completed_queue(int tid) {
     const uint32_t *cq_buf = completed_queue_read_batch(&g_completed_queue, tid, &cnt, CQ_BATCH_SIZE);
     if (cnt <= 0)
         return;
-    if (tid == 0 && cnt > 0)
+
+    if (tid == 0)
     {
         completed_task_cnt += cnt;
         if(completed_task_cnt >= total_task_cnt) {
@@ -93,7 +93,6 @@ void deal_completed_queue(int tid) {
     /* Batch consumed: move this painter's read cursor forward. */
     completed_queue_read_commit(&g_completed_queue, tid, cnt);
     send_2_ready_queue(ready_cnt, rq_buf);
-
 }
 
 void *painter(void *arg)

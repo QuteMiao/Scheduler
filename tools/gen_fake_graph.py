@@ -29,8 +29,6 @@ import subprocess
 import sys
 from typing import Optional
 
-
-
 def generate_task_ids(task_cnt: int, chunk_size: int, thread_idx: int, thread_cnt: int) -> list[int]:
     """Assign global task ids to one subgraph as round-robin chunks.
 
