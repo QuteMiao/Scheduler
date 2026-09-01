@@ -59,6 +59,9 @@ void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf, uint32_t rq_buf[
         idx = test_graph[tid].suc_idx[task_id];
         for (uint32_t k = idx; k < (idx + succ_cnt); k++) {
             succ_id = test_graph[tid].successors[k];
+            if (total_task_state[succ_id] == 1)
+                continue;
+            
             test_graph[tid].total_pre_cnt[succ_id]--;
             WORKER_LOGF("painter,task_id,%u,successor_id,%u,predecessor_cnt,%d", task_id, succ_id, test_graph[tid].total_pre_cnt[succ_id]);
             if (test_graph[tid].total_pre_cnt[succ_id] < 1) {

@@ -21,7 +21,7 @@ queue_t g_ready_queue[TASK_TYPE_CNT];
 queue_t g_near_ready_queue[TASK_TYPE_CNT];
 completed_queue_t g_completed_queue;
 
-static void init_global_queues(void)
+void init_global_queues(void)
 {
     for (int i = 0; i < TASK_TYPE_CNT; i++) {
         memset(&g_ready_queue[i], 0, sizeof(queue_t));
@@ -174,68 +174,83 @@ static inline void push_2_completed_queue(int tid)
     completed_queue_write_batch(&g_completed_queue, task_id, (uint32_t)complete_cnt);
 }
 
-static inline int send_task(ctrl_t *ctrl, queue_t *ready_queue, int type)
+static inline int send_task(ctrl_t *ctrl, queue_t *queue, int type, bool *has_idle_slot)
 {
-    // Check both slots - slot is free if neither slot 0 nor slot 1 has been sent a task.
-    // Mask with this die's aicore_mask so ctz stays within owned cores.
-    uint64_t free_bitmap = (ctrl->free_bitmap[type][0] & ctrl->free_bitmap[type][1]) & ctrl->aicore_mask;
-    int free_demand = __builtin_popcountll(free_bitmap);
-    if (free_demand <= 0) {
-        WORKER_LOGF("send,free_cnt,%d", free_demand);
-        return 0;
-    }
-    uint32_t task_ids[AIC_CNT];
-    uint32_t got = (uint32_t)free_demand;
-    if (!batch_dequeue(ready_queue, task_ids, &got)) {
-        return 0;
-    }
-
     int sent = 0;
-    for (uint32_t i = 0; i < got; i++) {
-        uint32_t task_id = task_ids[i];
-        uint64_t idx = (uint64_t)__builtin_ctzll(free_bitmap);
 
-        uint64_t mask = (uint64_t)0x1 << idx;
-        // Determine which slot to use - prefer slot 0 if it's not busy
-        int slot = (ctrl->free_bitmap[type][0] & mask) != 0 ? 0 : 1;
-        // Set executor's tasks and duration
-        int core = (int)idx;
-        (void)core;
+    for (int slot = 0; slot < AIC_OSTD; slot++) {
+        uint64_t free_bitmap = ctrl->free_bitmap[type][slot] & ctrl->aicore_mask;
+        int free_demand = __builtin_popcountll(free_bitmap);
+        if (free_demand <= 0) continue;
 
-        if (slot == 1) {
-            ctrl->task_id_map2[type][idx] = task_id;
-            #ifdef REAL_CHIP
-            *ctrl->aicore_spr_2[type][idx] = task_id;
-            #endif
-        } else {
-            ctrl->task_id_map1[type][idx] = task_id;
-            #ifdef REAL_CHIP
-            *ctrl->aicore_spr_1[type][idx] = task_id;
-            #endif
+        uint32_t task_ids[AIC_CNT];
+        uint32_t got = (uint32_t)free_demand;
+        if (!batch_dequeue(queue, task_ids, &got)) {
+            break;
         }
 
-        // Clear the free bit for this core/slot combination (mark as busy)
-        ctrl->free_bitmap[type][slot] &= ~mask;
+        for (uint32_t i = 0; i < got; i++) {
+            uint32_t task_id = task_ids[i];
+            uint64_t idx = (uint64_t)__builtin_ctzll(free_bitmap);
+            uint64_t mask = (uint64_t)0x1 << idx;
+            int core = (int)idx;
+            (void)core;
 
-        #ifndef REAL_CHIP
-        ctrl->msg_bitmap[type][slot] |= mask;
-        #endif
+            if (slot == 1) {
+                ctrl->task_id_map2[type][idx] = task_id;
+                #ifdef REAL_CHIP
+                *ctrl->aicore_spr_2[type][idx] = task_id;
+                #endif
+            } else {
+                ctrl->task_id_map1[type][idx] = task_id;
+                #ifdef REAL_CHIP
+                *ctrl->aicore_spr_1[type][idx] = task_id;
+                #endif
+            }
 
-        WORKER_LOGF("send,task_id,%u,core,%d,slot,%d,type,%d", task_id, core, slot, type);
-        sent++;
-        free_bitmap &= ~mask;
+            // Clear the free bit for this core/slot combination (mark as busy)
+            ctrl->free_bitmap[type][slot] &= ~mask;
+
+            #ifndef REAL_CHIP
+            ctrl->msg_bitmap[type][slot] |= mask;
+            #endif
+
+            WORKER_LOGF("send,task_id,%u,core,%d,slot,%d,type,%d", task_id, core, slot, type);
+            sent++;
+            free_bitmap &= ~mask;
+        }
     }
+
+    /* Report whether any slot of this type is still free, so the caller can
+     * decide whether to drain the near-ready queue. Only ever set to true:
+     * the caller initialises it to false and may share it across calls. */
+    if (has_idle_slot != NULL) {
+        for (int slot = 0; slot < AIC_OSTD; slot++) {
+            if (ctrl->free_bitmap[type][slot] & ctrl->aicore_mask) {
+                *has_idle_slot = true;
+                break;
+            }
+        }
+    }
+
     return sent;
 }
 
 int dispatch(int tid)
 {
     int total_sent = 0;
+    bool has_idle_slot = false;
+
     read_msgq(tid);
     push_2_completed_queue(tid);
-    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_MIX], TASK_TYPE_MIX);
-    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_VECTOR], TASK_TYPE_VECTOR);
-    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE);
+    // total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_MIX], TASK_TYPE_MIX);
+    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_VECTOR], TASK_TYPE_VECTOR, &has_idle_slot);
+    total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE, &has_idle_slot);
+
+    if (has_idle_slot) {
+        total_sent += send_task(&g_ctrl_t[tid], &g_near_ready_queue[TASK_TYPE_VECTOR], TASK_TYPE_VECTOR, NULL);
+        total_sent += send_task(&g_ctrl_t[tid], &g_near_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE, NULL);
+    }
     return total_sent;
 }
 

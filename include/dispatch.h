@@ -57,6 +57,7 @@ extern completed_queue_t g_completed_queue;
 
 void *dispatch_worker(void *arg);
 void init_ctrl_t(void);
+void init_global_queues(void);
 
 /* Batch-write completed tasks to the shared multi-reader ring buffer.
  * Multi-producer safe: writers serialize on write_lock. */
