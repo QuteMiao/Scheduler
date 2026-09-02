@@ -248,8 +248,12 @@ int dispatch(int tid)
     total_sent += send_task(&g_ctrl_t[tid], &g_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE, &has_idle_slot);
 
     if (has_idle_slot) {
-        total_sent += send_task(&g_ctrl_t[tid], &g_near_ready_queue[TASK_TYPE_VECTOR], TASK_TYPE_VECTOR, NULL);
-        total_sent += send_task(&g_ctrl_t[tid], &g_near_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE, NULL);
+        if (!queue_empty(&g_near_ready_queue[TASK_TYPE_VECTOR])) {
+            total_sent += send_task(&g_ctrl_t[tid], &g_near_ready_queue[TASK_TYPE_VECTOR], TASK_TYPE_VECTOR, NULL);
+        }
+        if (!queue_empty(&g_near_ready_queue[TASK_TYPE_CUBE])) {
+            total_sent += send_task(&g_ctrl_t[tid], &g_near_ready_queue[TASK_TYPE_CUBE], TASK_TYPE_CUBE, NULL);
+        }
     }
     return total_sent;
 }

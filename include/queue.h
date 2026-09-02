@@ -47,6 +47,14 @@ typedef struct queue {
 static inline void spin_lock(atomic_flag *lock);
 static inline void spin_unlock(atomic_flag *lock);
 
+/* Fast-path emptiness check: reads only head/tail, no locks. */
+static inline bool queue_empty(const queue_t *queue)
+{
+    uint64_t head = atomic_load_explicit(&queue->head, memory_order_relaxed);
+    uint64_t tail = atomic_load_explicit(&queue->tail, memory_order_acquire);
+    return tail <= head;
+}
+
 static inline bool batch_dequeue(queue_t *queue, uint32_t *item, uint32_t *n)
 {
     spin_lock(&queue->head_lock);
