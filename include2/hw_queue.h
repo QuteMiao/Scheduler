@@ -26,14 +26,25 @@
  *   DIE_QUEUE     : 2
  *   CHIP_QUEUE    : 1
  *
+ * every level is further split into TASK_TYPE_CNT dedicated queues, one per
+ * task type (CUBE / VECTOR / MIX), for a total of:
+ *
+ *   CLUSTER_QUEUE : 12 * 3 = 36
+ *   DIE_QUEUE     :  2 * 3 =  6
+ *   CHIP_QUEUE    :  1 * 3 =  3
+ *
  * ===================================================================== */
 #define CLUSTER_QUEUE_NUM  (CLUSTER_PER_DIE * DIE_NUM) /* 6 * 2 = 12 */
 #define DIE_QUEUE_NUM      DIE_NUM                     /* 2 */
 #define CHIP_QUEUE_NUM     1                       /* 1 */
 
+/* number of task types -> a dedicated queue per type at every level */
+#define TASK_TYPE_CNT      3                           /* CUBE / VECTOR / MIX */
+
 #define TCM_BASE 0x1
 #define TCM_DIE_OFFSET 0x1
 #define TCM_CLUSTER_OFFSET 0x1
+#define TCM_TYPE_OFFSET 0x1
 
 #define CHIP_QUEUE_SIZE 0x1
 #define DIE_QUEUE_SIZE 0x1
@@ -43,22 +54,34 @@
 #define CORE_PER_DIE   (CLUSTER_PER_DIE * AICORE_PER_CLUSTER) /* 6 * 10 = 60 */
 #define TOTAL_CORE_NUM (DIE_NUM * CORE_PER_DIE)               /* 2 * 60 = 120 */
 
-/* MSGQ register base address of each queue level */
-static inline uint64_t chip_queue_base(void)
+/* task types: each level keeps TASK_TYPE_CNT dedicated queues, one per type */
+typedef enum {
+    CUBE   = 0,
+    VECTOR = 1,
+    MIX    = 2,
+    CNT    = TASK_TYPE_CNT,
+} task_type_t;
+
+/* MSGQ register base address of each queue level, offset by task_type so that
+ * the CUBE / VECTOR / MIX queues of a level sit at consecutive addresses */
+static inline uint64_t chip_queue_base(task_type_t type)
 {
-    return (uint64_t)TCM_BASE;
+    return (uint64_t)TCM_BASE + (uint64_t)TCM_TYPE_OFFSET * (uint64_t)type;
 }
 
-static inline uint64_t die_queue_base(uint8_t die_id)
+static inline uint64_t die_queue_base(uint8_t die_id, task_type_t type)
 {
-    return (uint64_t)TCM_BASE + CHIP_QUEUE_SIZE + TCM_DIE_OFFSET * die_id;
+    return (uint64_t)TCM_BASE + CHIP_QUEUE_SIZE
+         + (uint64_t)TCM_DIE_OFFSET * (uint64_t)die_id
+         + (uint64_t)TCM_TYPE_OFFSET * (uint64_t)type;
 }
 
-static inline uint64_t cluster_queue_base(uint8_t die_id, uint8_t cluster_id)
+static inline uint64_t cluster_queue_base(uint8_t die_id, uint8_t cluster_id, task_type_t type)
 {
     return (uint64_t)TCM_BASE
-         + (uint64_t)die_id * (uint64_t)TCM_DIE_OFFSET
-         + (uint64_t)cluster_id * (uint64_t)TCM_CLUSTER_OFFSET;
+         + (uint64_t)TCM_DIE_OFFSET * (uint64_t)die_id
+         + (uint64_t)TCM_CLUSTER_OFFSET * (uint64_t)cluster_id
+         + (uint64_t)TCM_TYPE_OFFSET * (uint64_t)type;
 }
 
 /* resolve the owning die / cluster from a continuous core_id */
@@ -77,10 +100,11 @@ typedef struct {
     uint16_t  size;      /* QUEUE_LEVEL_* */
 } task_queue_desc_t;
 
-/* the three-level queue instances (bottom-up) */
-extern task_queue_desc_t g_chip_queue[CHIP_QUEUE_NUM];
-extern task_queue_desc_t g_die_queue[DIE_QUEUE_NUM];
-extern task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM];
+/* the three-level queue instances (bottom-up), each split into TASK_TYPE_CNT
+ * dedicated queues keyed by task_type_t */
+extern task_queue_desc_t g_chip_queue[TASK_TYPE_CNT];
+extern task_queue_desc_t g_die_queue[DIE_QUEUE_NUM][TASK_TYPE_CNT];
+extern task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
 
 /* build all queues bottom-up */
 void queue_init(void);
@@ -92,7 +116,7 @@ bool gqm_pop(uint64_t queue_base, uint64_t *task);
 
 /* total_task_coord[]: task_id -> the (die_id, cluster_id) coordinate of the
  * queue it was last pushed to / popped from. The array is defined once by the
- * workload case header (under cases/), sized to total_task_cnt; queue_push() and
+ * workload case header (under cases2/), sized to total_task_cnt; queue_push() and
  * queue_pop() keep it up to date. */
 extern int total_task_coord[];
 
@@ -105,10 +129,10 @@ extern int total_task_coord[];
  * queue was full. 0xFF is outside the valid ranges (die_id <= 1, cluster_id <= 5). */
 #define TASK_COORD_INVALID 0xFF
 
-/* PUSH/POP by continuous core_id; the nearest cluster/die is resolved
- * automatically from core_id, and on failure it falls back to the
- * upper-level queue (cluster -> die -> chip) */
-bool queue_push(uint32_t core_id, uint64_t task);
-bool queue_pop(uint32_t core_id, uint64_t *task);
+/* PUSH/POP by continuous core_id and task_type; the nearest cluster/die is
+ * resolved automatically from core_id, the queue of the given type is chosen,
+ * and on failure it falls back to the upper-level queue (cluster -> die -> chip) */
+bool queue_push(uint32_t core_id, task_type_t type, uint64_t task);
+bool queue_pop(uint32_t core_id, task_type_t type, uint64_t *task);
 
 #endif /* __HW_QUEUE_H__ */
