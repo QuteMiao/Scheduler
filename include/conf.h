@@ -22,6 +22,9 @@ extern cacheline_int_t g_start_barrier;
 #define AIC_CNT_PER_DIE 32
 #define EXE_TYPE_CNT 2
 
+#define MAX_TASK_CNT 4096
+extern uint32_t g_pred_xor[MAX_TASK_CNT];
+
 #define RQ_SIZE 4096
 #define RQ_BATCH_SIZE 512
 

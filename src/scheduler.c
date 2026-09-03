@@ -57,6 +57,7 @@ int main(void) {
 
     init_global_queues();
     init_ctrl_t();
+    init_pred_xor();
     init_queue();
     WORKER_LOGF("painter_cnt,%d,dispatcher_cnt,%d", PAINTER_THREAD_CNT, DISPATCH_THREAD_CNT);
     /* Register signal handlers for graceful shutdown on Ctrl+C */

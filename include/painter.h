@@ -29,5 +29,6 @@ extern atomic_int g_task_id;
 
 void *painter(void *arg);
 void init_queue(void);
+void init_pred_xor(void);
 
 #endif
