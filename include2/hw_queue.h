@@ -118,7 +118,7 @@ bool gqm_pop(uint64_t queue_base, uint64_t *task);
  * queue it was last pushed to / popped from. The array is defined once by the
  * workload case header (under cases2/), sized to total_task_cnt; queue_push() and
  * queue_pop() keep it up to date. */
-extern int total_task_coord[];
+extern int task_coord[];
 
 /* Pack die_id / cluster_id into the single int stored in total_task_coord[]:
  *   high byte = die_id, low byte = cluster_id */

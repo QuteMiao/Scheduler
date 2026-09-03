@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheduler 运行逻辑分析报告</title>
+<style>
+  :root { --bg:#f6f8fb; --card:#fff; --ink:#1f2937; --muted:#6b7280; --accent:#2563eb;
+          --accent-soft:#eff6ff; --border:#e5e7eb; --warn-bg:#fffbeb; --warn-border:#f59e0b;
+          --code-bg:#0f172a; --code-ink:#e2e8f0; --ok:#16a34a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; line-height:1.7; }
+  header.hero { background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 60%,#38bdf8 100%); color:#fff; padding:40px 32px; }
+  header.hero h1 { margin:0 0 8px; font-size:26px; }
+  header.hero p { margin:0; opacity:.92; font-size:14px; }
+  .wrap { max-width:1080px; margin:0 auto; padding:24px 20px 60px; }
+  .toc { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px 20px; margin-bottom:20px; }
+  .toc h2 { margin:0 0 8px; font-size:16px; }
+  .toc ol { margin:0; padding-left:22px; columns:2; column-gap:32px; }
+  .toc li { margin:3px 0; font-size:14px; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
+  section.card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px 24px; margin-bottom:18px; }
+  h2 { font-size:20px; margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid var(--accent-soft); }
+  h3 { font-size:16px; margin:18px 0 8px; color:var(--accent); }
+  p { margin:8px 0; }
+  ul, ol { margin:8px 0; padding-left:24px; }
+  li { margin:4px 0; }
+  code.inline { background:var(--accent-soft); color:#1d4ed8; border-radius:4px; padding:1px 6px;
+                font-family:"SF Mono",Consolas,monospace; font-size:13px; }
+  pre { background:var(--code-bg); color:var(--code-ink); padding:14px 16px; border-radius:8px; overflow-x:auto;
+        font-family:"SF Mono",Consolas,monospace; font-size:13px; line-height:1.55; }
+  pre .c { color:#64748b; font-style:italic; }
+  pre .k { color:#7dd3fc; } pre .t { color:#f0abfc; } pre .f { color:#a5f3fc; } pre .n { color:#fde68a; }
+  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid var(--border); padding:7px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--accent-soft); color:#1e3a8a; font-weight:600; }
+  tr:nth-child(even) td { background:#fafbfd; }
+  .note { background:var(--warn-bg); border-left:4px solid var(--warn-border); border-radius:6px; padding:12px 16px; margin:14px 0; }
+  .note b { color:#92400e; }
+  .flow { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:14px 18px;
+          font-family:"SF Mono",Consolas,monospace; font-size:13px; white-space:pre; overflow-x:auto; line-height:1.6; }
+  .tag { display:inline-block; background:var(--accent-soft); color:#1d4ed8; border-radius:20px; padding:1px 10px; font-size:12px; margin-right:6px; }
+  .ok { color:var(--ok); font-weight:600; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>Scheduler 运行逻辑分析报告</h1>
+  <p>分析范围：<code>cases2/</code>、<code>include2/</code>、<code>src2/</code> 三个目录下的源码</p>
+</header>
+
+<div class="wrap">
+
+<div class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">项目概述</a></li>
+    <li><a href="#s2">文件与职责</a></li>
+    <li><a href="#s3">硬件拓扑与三级队列</a></li>
+    <li><a href="#s4">任务类型</a></li>
+    <li><a href="#s5">依赖图数据结构</a></li>
+    <li><a href="#s6">运行总流程</a></li>
+    <li><a href="#s7">关键函数详解</a></li>
+    <li><a href="#s8">任务生命周期时序</a></li>
+    <li><a href="#s9">观察与潜在问题</a></li>
+    <li><a href="#s10">结论</a></li>
+  </ol>
+</div>
+
+<section class="card" id="s1">
+  <h2>1. 项目概述</h2>
+  <p>这是一套面向 AI 加速芯片（a6 架构）的<strong>硬件任务调度器</strong>。它把一个静态的算子依赖图（DAG，共 864 个任务）调度到分层硬件拓扑上执行，利用硬件队列（GQM/MSGQ 寄存器）与硬件计数器（publish/subscribe + SCB）完成任务的入队、取队与依赖同步。</p>
+  <ul>
+    <li><strong>负载分发</strong>：把任务推送到离执行核最近的队列，队列满时逐级上浮（cluster → die → chip）。</li>
+    <li><strong>数据局部性</strong>：后继任务被放到「前驱任务」所在的 cluster，减少跨簇搬数。</li>
+    <li><strong>依赖驱动 + 提前派发</strong>：任务在其依赖基本满足（还剩 ≤1 个前驱）时就提前入队，靠硬件计数器在真正执行前做最后一道同步。</li>
+  </ul>
+</section>
+
+<section class="card" id="s2">
+  <h2>2. 文件与职责</h2>
+  <table>
+    <tr><th>文件</th><th>职责</th></tr>
+    <tr><td><code>include2/hw_queue.h</code></td><td>硬件拓扑常量、三级队列结构、任务类型枚举、队列基地址计算，以及 <code>queue_push/pop/push_to_pre_coord</code> 接口声明。</td></tr>
+    <tr><td><code>src2/hw_queue.c</code></td><td>队列实例定义与初始化（<code>queue_init</code>），以及按 core_id / 前驱坐标进行任务入队、出队的具体实现。</td></tr>
+    <tr><td><code>src2/auto_kernel.c</code></td><td>运行在每颗 AI Core 上的「自动内核」执行循环：取任务、订阅依赖计数器、轮询就绪条件、执行、完成后发布并传播依赖。</td></tr>
+    <tr><td><code>cases2/qwen3_14b_decode.h</code></td><td>自动生成的静态工作量图数据（qwen3_14b_decode，864 任务），提供类型、时长、前驱/后继邻接表、坐标、依赖计数等数组。</td></tr>
+  </table>
+</section>
+
+<section class="card" id="s3">
+  <h2>3. 硬件拓扑与三级队列</h2>
+  <h3>3.1 硬件拓扑（自底向上）</h3>
+  <pre>CHIP (1)  →  DIE (2)  →  CLUSTER (每 die 6 个)  →  AICORE (每 cluster 10 个)
+                        TOTAL: 1 芯片 / 2 die / 12 cluster / 120 AI core</pre>
+  <table>
+    <tr><th>常量</th><th>值</th><th>含义</th></tr>
+    <tr><td><code>CLUSTER_PER_DIE</code></td><td>6</td><td>每个 die 内的 cluster 数</td></tr>
+    <tr><td><code>AICORE_PER_CLUSTER</code></td><td>10</td><td>每个 cluster 内的 AI core 数</td></tr>
+    <tr><td><code>CUBE_PER_AICORE / VECTOR_PER_AICORE</code></td><td>1 / 1</td><td>每 core 含 1 个 Cube + 1 个 Vector 单元</td></tr>
+    <tr><td><code>CORE_PER_DIE</code></td><td>6×10 = 60</td><td>每个 die 的 core 数</td></tr>
+    <tr><td><code>TOTAL_CORE_NUM</code></td><td>2×60 = 120</td><td>全芯片 core 数</td></tr>
+  </table>
+  <p>core 编号是<strong>连续</strong>的（0..119），由 <code>core_id_to_die</code> / <code>core_id_to_cluster</code> 反解出所属 die 与 cluster。</p>
+
+  <h3>3.2 三级队列 × 三种任务类型</h3>
+  <p>队列自底向上镜像硬件拓扑，共三级；每级又按任务类型拆成独立队列：</p>
+  <table>
+    <tr><th>级别</th><th>单位数</th><th>× 3 类型</th><th>队列总数</th></tr>
+    <tr><td>Cluster 队列</td><td>12</td><td>CUBE / VECTOR / MIX</td><td>36</td></tr>
+    <tr><td>Die 队列</td><td>2</td><td>CUBE / VECTOR / MIX</td><td>6</td></tr>
+    <tr><td>Chip 队列</td><td>1</td><td>CUBE / VECTOR / MIX</td><td>3</td></tr>
+    <tr><td><strong>合计</strong></td><td>—</td><td>—</td><td><strong>45</strong></td></tr>
+  </table>
+  <p>队列描述符 <code>task_queue_desc_t</code> 只有 <code>base</code>（硬件寄存器基地址）与 <code>size</code> 两个字段。基地址按「层级偏移 + 类型偏移」连续排布（当前都是 0x1 的占位偏移，见 <code>TCM_*</code> 宏）。</p>
+
+  <h3>3.3 坐标编码</h3>
+  <pre><span class="c">// 打包：高字节 = die_id，低字节 = cluster_id</span>
+TASK_COORD(die, cluster) = (die &lt;&lt; 8) | cluster
+TASK_COORD_INVALID = 0xFF   <span class="c">// 任务被上浮到 die/chip 队列后，该位置未知</span></pre>
+</section>
+
+<section class="card" id="s4">
+  <h2>4. 任务类型</h2>
+  <table>
+    <tr><th>枚举</th><th>值</th><th>含义</th></tr>
+    <tr><td><code>CUBE</code></td><td>0</td><td>矩阵/卷积类算子，由 Cube 单元执行</td></tr>
+    <tr><td><code>VECTOR</code></td><td>1</td><td>向量类算子，由 Vector 单元执行</td></tr>
+    <tr><td><code>MIX</code></td><td>2</td><td>混合算子（可被两类单元处理）</td></tr>
+  </table>
+  <p>数据集中 <code>task_type[]</code> 取值覆盖 0/1/2 三种。每个 core 通过 <code>run(bool isCube)</code> 决定自己是 <code>CUBE</code> 还是 <code>VECTOR</code> 型执行单元，并按对应类型去 <code>queue_pop</code>。</p>
+</section>
+
+<section class="card" id="s5">
+  <h2>5. 依赖图数据结构</h2>
+  <p>所有数据都在 <code>cases2/qwen3_14b_decode.h</code> 中，以 <code>static</code> 数组形式给出，规模均为 <code>total_task_cnt = 864</code>：</p>
+  <table>
+    <tr><th>数组</th><th>类型</th><th>含义</th></tr>
+    <tr><td><code>total_task_id[864]</code></td><td>uint32_t</td><td>任务 ID（0..863）</td></tr>
+    <tr><td><code>task_type[864]</code></td><td>char</td><td>任务类型 0/1/2（CUBE/VECTOR/MIX）</td></tr>
+    <tr><td><code>task_duration[864]</code></td><td>int</td><td>任务执行时长（周期数）</td></tr>
+    <tr><td><code>pre_idx[864]</code></td><td>int</td><td>该任务在 <code>predecessors[]</code> 中的起始下标</td></tr>
+    <tr><td><code>predecessors[]</code></td><td>int</td><td>扁平化前驱边列表</td></tr>
+    <tr><td><code>task_suc_cnt[864]</code></td><td>int</td><td>该任务的后继数量</td></tr>
+    <tr><td><code>task_suc_idx[864]</code></td><td>int</td><td>该任务在 <code>task_successors[]</code> 中的起始下标</td></tr>
+    <tr><td><code>task_successors[]</code></td><td>int</td><td>扁平化后继边列表</td></tr>
+    <tr><td><code>task_pre_cnt[864]</code></td><td>atomic_int</td><td>剩余未完成前驱数（运行时递减）</td></tr>
+    <tr><td><code>task_pre_xor[864]</code></td><td>int</td><td>已完成前驱 ID 的异或累加值（用于选「代表前驱」）</td></tr>
+    <tr><td><code>task_coord[864]</code></td><td>int</td><td>任务最近一次被放置的 (die,cluster) 坐标</td></tr>
+    <tr><td><code>task_state[864]</code></td><td>char</td><td>任务状态（当前未使用）</td></tr>
+  </table>
+  <p>邻接表采用经典的「索引数组 + 扁平边列表」压缩表示：<code>pre_idx[]/task_suc_idx[]</code> 给出起始偏移，配合前驱/后继边列表进行遍历。</p>
+</section>
+
+<section class="card" id="s6">
+  <h2>6. 运行总流程</h2>
+  <p>整体是一个「生产者-消费者 + 依赖传播」的闭环，没有中央调度器，而是每颗 core 自主取任务、自主传播依赖：</p>
+  <div class="flow">┌─────────────────────────────── 派发端（生产者） ───────────────────────────────┐
+│ 前驱任务完成 → on_task_done → resolve_dep                                        │
+│   · task_pre_cnt[succ]--                                                        │
+│   · 当 task_pre_cnt[succ] &lt; EARLY_DISPATCH(2) 时                               │
+│     → queue_push_to_pre_coord( 前驱坐标, type, succ )  // 把后继推到前驱附近    │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                      │ 入队（硬件队列）
+                                      ▼
+┌─────────────────────────────── 执行端（消费者） ───────────────────────────────┐
+│ run(bool isCube)：每颗 core 死循环                                              │
+│   · slot 空闲 → queue_pop 取一个任务                                            │
+│   · slot 占用 → check_ostd_*：订阅前驱计数器 → 轮询 SCB 就绪条件                │
+│   · 条件满足 → fake_kernel() 执行 → on_task_done → 回到派发端                  │
+└───────────────────────────────────────────────────────────────────────────────┘</div>
+  <p>两条数据流闭环：</p>
+  <ul>
+    <li><strong>任务流</strong>：<code>queue_push*</code> 写队列 → <code>queue_pop</code> 读队列 → 执行。</li>
+    <li><strong>依赖流</strong>：完成后 <code>publish</code>（通知计数器）→ 后继 <code>subscribe</code>（订阅计数器）→ SCB 触发执行。</li>
+  </ul>
+</section>
+
+<section class="card" id="s7">
+  <h2>7. 关键函数详解</h2>
+
+  <h3>7.1 queue_init()</h3>
+  <p>自底向上为 45 个队列计算并写入硬件寄存器基地址：</p>
+  <pre><span class="k">void</span> <span class="f">queue_init</span>(<span class="k">void</span>)
+{
+    <span class="c">// level 0: 12 个 cluster × 3 类型</span>
+    <span class="k">for</span> die ... <span class="k">for</span> cluster ... <span class="k">for</span> t in [0,3):
+        g_cluster_queue[die*6 + cluster][t].base = cluster_queue_base(die, cluster, t);
+
+    <span class="c">// level 1: 2 个 die × 3 类型</span>
+    g_die_queue[die][t].base = die_queue_base(die, t);
+
+    <span class="c">// level 2: 1 个 chip × 3 类型</span>
+    g_chip_queue[t].base = chip_queue_base(t);
+}</pre>
+
+  <h3>7.2 queue_push(core_id, type, task)</h3>
+  <p>按 core_id 反解出 die/cluster，把任务推到「最近 cluster 队列 → 本 die 队列 → chip 队列」，哪级成功就在 <code>task_coord[task_id]</code> 记录对应坐标（未知位置用 <code>0xFF</code>）。</p>
+  <pre><span class="t">bool</span> <span class="f">queue_push</span>(<span class="t">uint32_t</span> core_id, <span class="t">task_type_t</span> type, <span class="t">uint64_t</span> task)
+{
+    die_id = core_id_to_die(core_id);   cluster_id = core_id_to_cluster(core_id);
+    cluster_q = die_id * CLUSTER_PER_DIE + cluster_id;
+
+    <span class="k">if</span> (gqm_push(g_cluster_queue[cluster_q][type].base, task))   <span class="c">// 最近 cluster</span>
+        { task_coord[task_id]=TASK_COORD(die, cluster); <span class="k">return true</span>; }
+    <span class="k">if</span> (gqm_push(g_die_queue[die_id][type].base, task))       <span class="c">// 上浮 die</span>
+        { task_coord[task_id]=TASK_COORD(die, INVALID); <span class="k">return true</span>; }
+    <span class="k">if</span> (gqm_push(g_chip_queue[type].base, task))             <span class="c">// 上浮 chip</span>
+        { task_coord[task_id]=TASK_COORD(INVALID, INVALID); <span class="k">return true</span>; }
+    <span class="k">return false</span>;   <span class="c">// 全满</span>
+}</pre>
+
+  <h3>7.3 queue_pop(core_id, type, *task)</h3>
+  <p>与 push 对称，先在本 cluster 队列取，再依次上浮；取出后同样更新该任务的 <code>task_coord</code>。</p>
+
+  <h3>7.4 queue_push_to_pre_coord(coord, type, task)</h3>
+  <p>与前两者不同，它不依赖 core_id，而是以<strong>前驱的打包坐标</strong>为锚点，把后继任务放到前驱所在 cluster（数据局部性最优），失败则上浮 die / chip：</p>
+  <pre><span class="t">bool</span> <span class="f">queue_push_to_pre_coord</span>(<span class="t">int</span> coord, <span class="t">task_type_t</span> type, <span class="t">uint64_t</span> task)
+{
+    die_id = (<span class="t">uint8_t</span>)(coord &gt;&gt; 8);   <span class="c">// 高字节</span>
+    cluster_id = (<span class="t">uint8_t</span>)(coord &amp; 0xFF); <span class="c">// 低字节</span>
+
+    <span class="c">// 前驱 die/cluster 有效时才尝试最近的 cluster 队列（防止 0xFF 越界）</span>
+    <span class="k">if</span> (die_id &lt; DIE_NUM &amp;&amp; cluster_id &lt; CLUSTER_PER_DIE)
+        <span class="k">if</span> (gqm_push(g_cluster_queue[die_id*6+cluster_id][type].base, task))
+            { task_coord[task_id]=TASK_COORD(die, cluster); <span class="k">return true</span>; }
+    <span class="k">if</span> (die_id &lt; DIE_NUM)
+        <span class="k">if</span> (gqm_push(g_die_queue[die_id][type].base, task))
+            { task_coord[task_id]=TASK_COORD(die, INVALID); <span class="k">return true</span>; }
+    <span class="k">if</span> (gqm_push(g_chip_queue[type].base, task))
+        { task_coord[task_id]=TASK_COORD(INVALID, INVALID); <span class="k">return true</span>; }
+    <span class="k">return false</span>;
+}</pre>
+</section>
+
+<section class="card">
+  <h3>7.5 run(bool isCube)</h3>
+  <p>每颗 core 的执行主循环，采用「双 slot（<code>TASK_OSTD=2</code>）」软流水，让一个任务的执行与另一个任务的依赖等待重叠：</p>
+  <pre><span class="k">void</span> <span class="f">run</span>(<span class="t">bool</span> isCube) {
+    core_id = get_coreid();
+    type = isCube ? CUBE : VECTOR;
+
+    <span class="k">while</span> (true) {
+        <span class="k">if</span> (slot_free[0]) {                    <span class="c">// slot 0 空闲 → 取新任务</span>
+            task_id = INVALID_TASK_ID;
+            queue_pop(core_id, type, &amp;task_id);
+            set_ipc_reg_0(task_id);           <span class="c">// 写任务上下文到 IPC 寄存器</span>
+            slot_free[0] = false;
+        } <span class="k">else</span> check_ostd_0();                 <span class="c">// slot 0 占用 → 轮询依赖/执行</span>
+
+        <span class="k">if</span> (slot_free[1]) {                    <span class="c">// slot 1 同理</span>
+            task_id = INVALID_TASK_ID;
+            queue_pop(core_id, type, &amp;task_id);
+            set_ipc_reg_4(task_id);
+            slot_free[1] = false;
+        } <span class="k">else</span> check_ostd_1();
+    }
+}</pre>
+
+  <h3>7.6 check_ostd_0() / check_ostd_1()</h3>
+  <p>当 slot 已被占用时，检查该 slot 上任务的依赖是否就绪：读任务 ID → 若还有前驱则 <code>subscribe</code>（订阅前驱完成计数器）→ 读 SCB 条件 → 条件满足则执行：</p>
+  <pre><span class="k">void</span> <span class="f">check_ostd_0</span>() {
+    task_id = get_ipc_reg_0();
+    <span class="k">if</span> (task_id != INVALID_TASK_ID) {
+        predecessor_id = get_ipc_reg_1();
+        <span class="k">if</span> (predecessor_id &gt; 0) { subscribe(predecessor_id, 1, 0); } <span class="c">// 订阅前驱计数器==1</span>
+        cond = get_ipc_scb_0();              <span class="c">// 轮询同步计数器块</span>
+        <span class="k">if</span> (cond &gt; 0) {
+            fake_kernel();                   <span class="c">// 依赖已满足 → 真正执行</span>
+            slot_free[0] = true;
+            on_task_done(task_id);           <span class="c">// 完成后发布 + 传播</span>
+        }
+    }
+}</pre>
+  <p>slot 0 使用寄存器 reg_0/reg_1/reg_2 与 scb_0，slot 1 使用 reg_4/reg_5/reg_6 与 scb_6，二者结构完全对称。</p>
+
+  <h3>7.7 on_task_done() 与 resolve_dep()</h3>
+  <p>任务完成的收尾：先发布计数器（<code>publish</code>，通知订阅方），再遍历所有后继，递减其依赖计数并在「依赖基本满足」时提前派发：</p>
+  <pre><span class="k">void</span> <span class="f">on_task_done</span>(task_id) { publish(task_id); resolve_dep(task_id); }
+
+<span class="k">void</span> <span class="f">resolve_dep</span>(task_id) {
+    succ_cnt = task_suc_cnt[task_id];
+    <span class="k">if</span> (succ_cnt &lt;= 0) <span class="k">return</span>;
+    <span class="k">for</span> k <span class="k">in</span> [task_suc_idx[task_id], ...+succ_cnt):
+        succ_id = task_successors[k];
+        task_pre_xor[succ_id] ^= task_id;          <span class="c">// 记录已完成的前驱（异或）</span>
+        task_pre_cnt[succ_id]--;                   <span class="c">// 剩余依赖 -1</span>
+        <span class="k">if</span> (task_pre_cnt[succ_id] &lt; EARLY_DISPATCH) {   <span class="c">// &lt; 2，即还剩 ≤1 个前驱</span>
+            type = task_type[succ_id];
+            queue_push_to_pre_coord(task_coord[task_pre_xor[succ_id]], type, succ_id);
+        }
+}</pre>
+  <p><code>EARLY_DISPATCH = 2</code> 的含义：当后继还剩 1 个前驱未完成时就提前入队，把「取数/搬数」与最后那个前驱的执行重叠；真正执行前再由 <code>subscribe</code> 挂在那个前驱的计数器上做最后同步。</p>
+</section>
+
+<section class="card" id="s8">
+  <h2>8. 任务生命周期时序</h2>
+  <div class="flow">任务 T 的生命周期：
+
+  [1] 派发   前驱完成 → resolve_dep 递减 task_pre_cnt[T]
+             当 pre_cnt &lt; 2  →  queue_push_to_pre_coord(前驱坐标, type, T)
+                                        │  写入硬件队列（cluster/die/chip）
+  [2] 入队   task_coord[T] = 打包坐标 (die,cluster)
+  [3] 取队   core 的 slot 空闲 → queue_pop(core, type, &amp;T) → 写 IPC 寄存器
+  [4] 等待   读前驱 → subscribe(前驱计数器) → 轮询 get_ipc_scb_*
+  [5] 执行   条件 cond&gt;0 → fake_kernel()（当前为 TODO 桩）
+  [6] 完成   on_task_done(T) → publish(T) + resolve_dep(T) → 回到 [1] 派发其后继</div>
+  <p>其中 [4]→[5] 是硬件计数器驱动的「最后一道依赖同步」，而 [1] 的提前派发是纯软件（队列）层面的。</p>
+</section>
+
+<section class="card" id="s9">
+  <h2>9. 观察与潜在问题</h2>
+  <p>以下为静态阅读代码时发现的、可能影响正确性/可读性的点（按重要程度排序）：</p>
+
+  <div class="note"><b>① 关键桩函数未实现。</b><code>publish()</code>、<code>subscribe()</code>、<code>fake_kernel()</code> 均为空实现（TODO），且 <code>get_ipc_reg_*</code> / <code>set_ipc_reg_*</code> / <code>get_coreid()</code> 等硬件原语当前只是返回常量（0..7）的占位宏。因此整条「计数器同步 + 真正执行」链路目前是逻辑骨架，尚未接通真实硬件。</div>
+
+  <div class="note"><b>② task_coord 为 static，跨编译单元存在多份副本。</b>该数组定义在 <code>cases2/qwen3_14b_decode.h</code> 中且为 <code>static</code>，同时被 <code>hw_queue.c</code>（写入坐标）与 <code>auto_kernel.c</code>（读取前驱坐标）各自包含，于是二者访问的是各自独立的副本：写入不会反映到另一边的读取上，<code>task_coord[task_pre_xor[succ]]</code> 读到的将是全 0。要打通局部性调度，需把该数组改为非 static 的全局共享定义（或通过 extern 声明唯一实例）。</div>
+
+  <div class="note"><b>③ total_task_coord 是悬空声明。</b><code>hw_queue.h</code> 仍声明 <code>extern int total_task_coord[]</code>，但三个目录内既无定义、<code>hw_queue.c</code> 也已改用 <code>task_coord</code>，属于遗留声明，链接时会缺符号（若被引用）。</div>
+
+  <div class="note"><b>④ MIX 类型任务无人消费。</b><code>run(bool isCube)</code> 只把执行单元映射为 <code>CUBE</code> 或 <code>VECTOR</code>，<code>queue_pop</code> 也只会按这两种类型取队；而 <code>task_type[]</code> 中存在取值 2（MIX），这些任务会被 <code>queue_push_to_pre_coord</code> 推入 MIX 队列却永远不会被取出。</div>
+
+  <div class="note"><b>⑤ IPC 寄存器读写不完全对应。</b>在 <code>run()</code> 中，slot 0 的 <code>predecessor_id</code> 未初始化即写入 reg_2；而 <code>check_ostd_0()</code> 却把 reg_1 当作 predecessor_id、把 reg_2 当作 context。二者对寄存器的分工不一致（slot 1 的 reg_5/reg_6 同理），疑似尚未定稿的寄存器接线。</div>
+
+  <div class="note"><b>⑥ task_pre_xor 非原子 + 初值可疑。</b><code>task_pre_xor[succ] ^= task_id</code> 是普通 int 的读-改-写，多颗 core 并发完成同一后继的前驱时会存在竞态；且从当前数据看，<code>task_pre_xor</code> 的初值与 <code>pre_idx</code> 完全一致，疑似生成脚本未正确初始化（期望值通常是「所有前驱 ID 的异或」或 0）。</div>
+
+  <div class="note"><b>⑦ gqm_push / gqm_pop 未定义。</b>它们是硬件队列原语，仅在头文件中声明（本目录内无实现），依赖真实硬件/驱动环境提供；当前 <code>TCM_*</code> 基地址偏移也都是 0x1 占位值。</div>
+</section>
+
+<section class="card" id="s10">
+  <h2>10. 结论</h2>
+  <p>这套代码已经清晰地勾勒出一个<strong>无中央调度器、硬件队列 + 计数器驱动</strong>的任务调度骨架：</p>
+  <ul>
+    <li>分层队列（cluster/die/chip）× 三种类型（CUBE/VECTOR/MIX）实现了带「上浮」的负载分发。</li>
+    <li><code>queue_push_to_pre_coord</code> 实现了「后继跟随前驱」的<strong>数据局部性</strong>调度。</li>
+    <li><code>resolve_dep</code> + <code>EARLY_DISPATCH=2</code> 实现了<strong>提前派发</strong>，配合 subscribe/publish 做最终依赖同步。</li>
+    <li>双 slot 软流水让取队、等待、执行互相重叠，隐藏依赖等待延迟。</li>
+  </ul>
+  <p>主要风险集中在「桩函数未实现」与「跨编译单元的共享状态（<code>task_coord</code>/<code>task_pre_xor</code>）语义不正确」两处；在接通真实硬件之前，建议先修正 ②③④⑥ 中的数据一致性问题，使逻辑闭环成立。</p>
+</section>
+
+
+
+
+
+</div>
+</body>
+</html>
