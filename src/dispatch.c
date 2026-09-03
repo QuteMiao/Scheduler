@@ -149,6 +149,22 @@ static inline void read_msgq(int tid)
     set_mix(tid);
 }
 
+/* Global per-task completion bitmap: bit i == 1 means task i has completed.
+ * One uint64_t word covers 64 task ids, so setting/getting a task's state is
+ * a pair of O(1) bit operations. Sized to the largest generated workload. */
+#define TASK_STATE_BITMAP_WORDS 80 /* 80 * 64 = 5120 bits */
+uint64_t task_state_bitmap[TASK_STATE_BITMAP_WORDS];
+
+static inline void task_state_set(uint32_t task_id)
+{
+    task_state_bitmap[task_id >> 6] |= ((uint64_t)1 << (task_id & 63));
+}
+
+__attribute__((unused)) static inline bool task_state_get(uint32_t task_id)
+{
+    return (task_state_bitmap[task_id >> 6] & ((uint64_t)1 << (task_id & 63))) != 0;
+}
+
 static inline void get_completed(uint64_t* bitmap, uint32_t task_id[], int *complete_cnt,
                                  const uint32_t task_id_map[])
 {
@@ -156,6 +172,7 @@ static inline void get_completed(uint64_t* bitmap, uint32_t task_id[], int *comp
     while (cnt > 0) {
         uint64_t idx = (uint64_t)__builtin_ctzll(*bitmap);
         task_id[(*complete_cnt)] = task_id_map[idx];
+        task_state_set(task_id_map[idx]);
         WORKER_LOGF("completed,task_id,%u,complete_cnt,%d,core,%llu,bitmap,%llu", task_id_map[idx], *complete_cnt, (unsigned long long)idx, (unsigned long long)*bitmap);
         (*complete_cnt)++;
         cnt--;
