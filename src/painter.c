@@ -75,7 +75,6 @@ void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf,
             succ_id = test_graph[tid].successors[k];
             if (total_task_state[succ_id] == 1)
                 continue;
-            
             test_graph[tid].total_pre_cnt[succ_id]--;
             g_pred_xor[succ_id] ^= task_id;
             WORKER_LOGF("painter,task_id,%u,successor_id,%u,predecessor_cnt,%d", task_id, succ_id, test_graph[tid].total_pre_cnt[succ_id]);
