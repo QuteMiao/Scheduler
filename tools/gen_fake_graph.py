@@ -251,7 +251,7 @@ def generate_header(args: argparse.Namespace) -> str:
     total_duration_vals = [0] * total_cnt
     total_pre_cnt_vals = [0] * total_cnt
     total_task_state_vals = [0] * total_cnt
-    total_task_cluster_id_vals = [0] * total_cnt
+    total_task_coord_vals = [0] * total_cnt
     for group in groups:
         for i, tid in enumerate(group["task_id"]):
             pos = id_to_pos[tid]
@@ -284,8 +284,8 @@ def generate_header(args: argparse.Namespace) -> str:
     lines.append(" * keep it on its own 64-byte cache line to avoid false sharing. */")
     lines.append(f"static _Alignas(CACHE_LINE_SIZE) int total_pre_cnt[{task_cnt}] = {{{_array_body(total_pre_cnt_vals)}}};")
     lines.append(f"static char total_task_state[{task_cnt}] = {{{_array_body(total_task_state_vals)}}};")
-    lines.append("/* total_task_cluster_id[]: task -> cluster affinity, initialized to 0. */")
-    lines.append(f"static int total_task_cluster_id[{task_cnt}] = {{{_array_body(total_task_cluster_id_vals)}}};")
+    lines.append("/* total_task_coord[]: task -> cluster affinity, initialized to 0. */")
+    lines.append(f"static int total_task_coord[{task_cnt}] = {{{_array_body(total_task_coord_vals)}}};")
     lines.append("")
 
     # Per-subgraph arrays.

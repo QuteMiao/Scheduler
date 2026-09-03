@@ -85,9 +85,25 @@ extern task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM];
 /* build all queues bottom-up */
 void queue_init(void);
 
-/* GQM hardware queue primitive: PUSH/POP via hardware instructions */
-bool gqm_push(const task_queue_desc_t *q, uint64_t task);
-bool gqm_pop(const task_queue_desc_t *q, uint64_t *task);
+/* GQM hardware queue primitive: PUSH/POP via hardware instructions.
+ * the first parameter is the queue's hardware register base address */
+bool gqm_push(uint64_t queue_base, uint64_t task);
+bool gqm_pop(uint64_t queue_base, uint64_t *task);
+
+/* total_task_coord[]: task_id -> the (die_id, cluster_id) coordinate of the
+ * queue it was last pushed to / popped from. The array is defined once by the
+ * workload case header (under cases/), sized to total_task_cnt; queue_push() and
+ * queue_pop() keep it up to date. */
+extern int total_task_coord[];
+
+/* Pack die_id / cluster_id into the single int stored in total_task_coord[]:
+ *   high byte = die_id, low byte = cluster_id */
+#define TASK_COORD(die_id, cluster_id) (((int)(die_id) << 8) | (int)(cluster_id))
+
+/* Sentinel for die_id / cluster_id written to total_task_coord[] when a task
+ * is placed in a higher-level queue (die/chip) because its owning cluster/die
+ * queue was full. 0xFF is outside the valid ranges (die_id <= 1, cluster_id <= 5). */
+#define TASK_COORD_INVALID 0xFF
 
 /* PUSH/POP by continuous core_id; the nearest cluster/die is resolved
  * automatically from core_id, and on failure it falls back to the

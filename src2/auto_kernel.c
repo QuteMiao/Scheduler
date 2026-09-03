@@ -27,6 +27,11 @@ inline void fake_kernel() {
     // TODO
 }
 
+
+void on_task_done(uint64_t task_id) {
+    publish(task_id);
+}
+
 inline void check_ostd_1(uint8_t idx, uint64_t* prev_task_id) {
     uint64_t task_id = get_ipc_reg_4();
     
@@ -45,7 +50,7 @@ inline void check_ostd_1(uint8_t idx, uint64_t* prev_task_id) {
             uint64_t context_addr = get_ipc_reg_6();
             fake_kernel();
             prev_task_id[idx] = task_id;
-            publish(task_id);
+            on_task_done(task_id);
         }
     }
 }
@@ -67,7 +72,7 @@ inline void check_ostd_0(uint8_t idx, uint64_t* prev_task_id) {
             uint64_t context_addr = get_ipc_reg_2();
             fake_kernel();
             prev_task_id[idx] = task_id;
-            publish(task_id);
+            on_task_done(task_id);
         }
     }
 }

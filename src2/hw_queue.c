@@ -41,19 +41,27 @@ bool queue_push(uint32_t core_id, uint64_t task)
 {
     uint8_t die_id     = core_id_to_die(core_id);
     uint8_t cluster_id = core_id_to_cluster(core_id);
+    uint32_t task_id   = (uint32_t)task;
 
     /* level 0: nearest cluster queue */
-    if (gqm_push(&g_cluster_queue[die_id * CLUSTER_PER_DIE + cluster_id], task)) {
+    if (gqm_push(g_cluster_queue[die_id * CLUSTER_PER_DIE + cluster_id].base, task)) {
+        total_task_coord[task_id] = TASK_COORD(die_id, cluster_id);
         return true;
     }
 
-    /* level 1: owning die queue */
-    if (gqm_push(&g_die_queue[die_id], task)) {
+    /* level 1: owning die queue (cluster queue was full -> cluster unknown) */
+    if (gqm_push(g_die_queue[die_id].base, task)) {
+        total_task_coord[task_id] = TASK_COORD(die_id, TASK_COORD_INVALID);
         return true;
     }
 
-    /* level 2: chip queue */
-    return gqm_push(&g_chip_queue[0], task);
+    /* level 2: chip queue (die queue was full -> die/cluster both unknown) */
+    if (gqm_push(g_chip_queue[0].base, task)) {
+        total_task_coord[task_id] = TASK_COORD(TASK_COORD_INVALID, TASK_COORD_INVALID);
+        return true;
+    }
+
+    return false;
 }
 
 bool queue_pop(uint32_t core_id, uint64_t *task)
@@ -62,15 +70,22 @@ bool queue_pop(uint32_t core_id, uint64_t *task)
     uint8_t cluster_id = core_id_to_cluster(core_id);
 
     /* level 0: nearest cluster queue */
-    if (gqm_pop(&g_cluster_queue[die_id * CLUSTER_PER_DIE + cluster_id], task)) {
+    if (gqm_pop(g_cluster_queue[die_id * CLUSTER_PER_DIE + cluster_id].base, task)) {
+        total_task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
         return true;
     }
 
     /* level 1: owning die queue */
-    if (gqm_pop(&g_die_queue[die_id], task)) {
+    if (gqm_pop(g_die_queue[die_id].base, task)) {
+        total_task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
         return true;
     }
 
     /* level 2: chip queue */
-    return gqm_pop(&g_chip_queue[0], task);
+    if (gqm_pop(g_chip_queue[0].base, task)) {
+        total_task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
+        return true;
+    }
+
+    return false;
 }
