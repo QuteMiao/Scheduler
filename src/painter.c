@@ -49,22 +49,12 @@ void init_queue(void)
     }
 }
 
-/* Must run before any thread starts: the predecessor count is read from
- * total_pre_cnt[], which resolve_dep() decrements in place. */
+/* Seeds g_pred_xor[] from total_pred_xor[] in the case header. Must run before any
+ * thread starts: once the painters are up, resolve_dep() folds each completed
+ * predecessor out of that same array. */
 void init_pred_xor(void)
 {
-    for (int tid = 0; tid < PAINTER_THREAD_CNT; tid++) {
-        for (uint32_t i = 0; i < test_graph[tid].task_cnt; i++) {
-            uint32_t task_id = test_graph[tid].task_id[i];
-            uint32_t pre_cnt = (uint32_t)test_graph[tid].total_pre_cnt[task_id];
-            uint32_t idx = test_graph[tid].pre_idx[i];
-            uint32_t acc = 0;
-            for (uint32_t k = idx; k < (idx + pre_cnt); k++) {
-                acc ^= (uint32_t)test_graph[tid].predecessors[k];
-            }
-            g_pred_xor[task_id] = acc;
-        }
-    }
+    memcpy(g_pred_xor, total_pred_xor, total_task_cnt * sizeof(g_pred_xor[0]));
 }
 
 void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf,
