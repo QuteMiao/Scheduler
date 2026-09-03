@@ -135,4 +135,10 @@ extern int total_task_coord[];
 bool queue_push(uint32_t core_id, task_type_t type, uint64_t task);
 bool queue_pop(uint32_t core_id, task_type_t type, uint64_t *task);
 
+/* PUSH to the queue nearest a predecessor's packed (die_id, cluster_id)
+ * coordinate, so a successor is scheduled onto the cluster that produced its
+ * data. coord is a TASK_COORD() value; the cluster -> die -> chip fallback
+ * mirrors queue_push(). */
+bool queue_push_to_pre_coord(int coord, task_type_t type, uint64_t task);
+
 #endif /* __HW_QUEUE_H__ */

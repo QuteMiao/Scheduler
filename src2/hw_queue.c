@@ -1,5 +1,5 @@
 #include "hw_queue.h"
-
+#include "cases2/qwen3_14b_decode.h"
 /* ---------------------------------------------------------------------
  * three-level queue instances, mirroring the hardware TOPO bottom-up:
  *   12 cluster queues + 2 die queues + 1 chip queue
@@ -51,19 +51,19 @@ bool queue_push(uint32_t core_id, task_type_t type, uint64_t task)
 
     /* level 0: nearest cluster queue of the given type */
     if (gqm_push(g_cluster_queue[cluster_q][type].base, task)) {
-        total_task_coord[task_id] = TASK_COORD(die_id, cluster_id);
+        task_coord[task_id] = TASK_COORD(die_id, cluster_id);
         return true;
     }
 
     /* level 1: owning die queue of the given type (cluster full -> cluster unknown) */
     if (gqm_push(g_die_queue[die_id][type].base, task)) {
-        total_task_coord[task_id] = TASK_COORD(die_id, TASK_COORD_INVALID);
+        task_coord[task_id] = TASK_COORD(die_id, TASK_COORD_INVALID);
         return true;
     }
 
     /* level 2: chip queue of the given type (die full -> die/cluster unknown) */
     if (gqm_push(g_chip_queue[type].base, task)) {
-        total_task_coord[task_id] = TASK_COORD(TASK_COORD_INVALID, TASK_COORD_INVALID);
+        task_coord[task_id] = TASK_COORD(TASK_COORD_INVALID, TASK_COORD_INVALID);
         return true;
     }
 
@@ -78,19 +78,62 @@ bool queue_pop(uint32_t core_id, task_type_t type, uint64_t *task)
 
     /* level 0: nearest cluster queue of the given type */
     if (gqm_pop(g_cluster_queue[cluster_q][type].base, task)) {
-        total_task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
+        task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
         return true;
     }
 
     /* level 1: owning die queue of the given type */
     if (gqm_pop(g_die_queue[die_id][type].base, task)) {
-        total_task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
+        task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
         return true;
     }
 
     /* level 2: chip queue of the given type */
     if (gqm_pop(g_chip_queue[type].base, task)) {
-        total_task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
+        task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
+        return true;
+    }
+
+    return false;
+}
+
+/* ---------------------------------------------------------------------
+ * PUSH to the queue nearest a predecessor's coordinate.
+ *
+ * Mirrors queue_push(), but instead of resolving the target from a continuous
+ * core_id it starts from the packed (die_id, cluster_id) coordinate of a
+ * task's predecessor (as recorded in task_coord[]), so a successor is
+ * scheduled onto the cluster that just produced its data (best locality).
+ * On failure it falls back to the owning die queue and finally the chip
+ * queue, exactly like queue_push().
+ * --------------------------------------------------------------------- */
+bool queue_push_to_pre_coord(int coord, task_type_t type, uint64_t task)
+{
+    uint8_t die_id     = (uint8_t)(coord >> 8);
+    uint8_t cluster_id = (uint8_t)(coord & 0xFF);
+    uint32_t task_id   = (uint32_t)task;
+
+    /* level 0: cluster queue nearest the predecessor (skip when the
+     * predecessor's die/cluster is unknown, i.e. it was demoted upward) */
+    if (die_id < DIE_NUM && cluster_id < CLUSTER_PER_DIE) {
+        uint8_t cluster_q = die_id * CLUSTER_PER_DIE + cluster_id;
+        if (gqm_push(g_cluster_queue[cluster_q][type].base, task)) {
+            task_coord[task_id] = TASK_COORD(die_id, cluster_id);
+            return true;
+        }
+    }
+
+    /* level 1: owning die queue (cluster full/unknown -> cluster unknown) */
+    if (die_id < DIE_NUM) {
+        if (gqm_push(g_die_queue[die_id][type].base, task)) {
+            task_coord[task_id] = TASK_COORD(die_id, TASK_COORD_INVALID);
+            return true;
+        }
+    }
+
+    /* level 2: chip queue (die full/unknown -> die/cluster both unknown) */
+    if (gqm_push(g_chip_queue[type].base, task)) {
+        task_coord[task_id] = TASK_COORD(TASK_COORD_INVALID, TASK_COORD_INVALID);
         return true;
     }
 

@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "include2/hw_queue.h"
 #include "cases2/qwen3_14b_decode.h"
 
 #define TASK_OSTD 2
@@ -19,7 +20,9 @@
 
 bool slot_free[TASK_OSTD] = {true, true};
 
-#define INVALID_TASK_ID 0xFFFFFFFF
+uint16_t core_id = 0;
+
+#define INVALID_TASK_ID 0xFFFFFFFFFFFFFFFF
 
 inline void publish(uint32_t counter_id) {
     // TODO
@@ -33,7 +36,7 @@ inline void fake_kernel() {
     // TODO
 }
 
-#define EARLY_DISPATCH 1
+#define EARLY_DISPATCH 2
 
 void resolve_dep(uint32_t task_id) {
     uint32_t succ_id;
@@ -46,15 +49,18 @@ void resolve_dep(uint32_t task_id) {
     idx = task_suc_idx[task_id];
     for (uint32_t k = idx; k < (idx + succ_cnt); k++) {
         succ_id = task_successors[k];
+        task_pre_xor[succ_id] ^= task_id;
         task_pre_cnt[succ_id]--;
         if (task_pre_cnt[succ_id] < EARLY_DISPATCH) {
             task_type_t type = task_type[succ_id];
+            queue_push_to_pre_coord(task_coord[task_pre_xor[succ_id]], type, succ_id);
         }
     }
 }
 
 void on_task_done(uint64_t task_id) {
     publish(task_id);
+    resolve_dep(task_id);
 }
 
 inline void check_ostd_1() {
@@ -104,11 +110,10 @@ inline void check_ostd_0() {
     }
 }
 
-
-
 void run(bool isCube) {
-    uint16_t core_id = (uint16_t)get_coreid();
+    core_id = (uint16_t)get_coreid();
     task_type_t type = isCube ? CUBE : VECTOR;
+
     while (true) {
         if (slot_free[0])
         {
