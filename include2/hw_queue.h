@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 
 #define CLUSTER_PER_DIE 6
 #define AICORE_PER_CLUSTER 10
@@ -122,15 +123,44 @@ typedef struct {
     uint16_t  size;      /* QUEUE_LEVEL_* */
 } task_queue_desc_t;
 
+/* ---------------------------------------------------------------------
+ * cluster queue: a fixed-size ring queue built on the Cluster Tensor
+ * Register (CTR). Storage is NOT embedded: each queue points to `capacity`
+ * consecutive 64-bit registers, addressed by head/tail offsets. Enqueue and
+ * dequeue use separate head/tail locks so a producer and a consumer can run
+ * concurrently.
+ *
+ *   head : next register offset to dequeue
+ *   tail : next register offset to enqueue
+ *   empty: head == tail
+ *   full : (tail + 1) % capacity == head  (one slot reserved)
+ * --------------------------------------------------------------------- */
+
+/* per-cluster AICore count, used to size the register-based queues */
+#define AICORE_NUM_PER_CLUSTER AICORE_PER_CLUSTER   /* 10 */
+
+/* queue depths, expressed as consecutive 64-bit registers */
+#define CLUSTER_QUEUE_DEPTH          (2 * AICORE_NUM_PER_CLUSTER)  /* 20 */
+#define CLUSTER_COMPLETE_QUEUE_DEPTH (4 * AICORE_NUM_PER_CLUSTER)  /* 40 */
+
+typedef struct {
+    uint64_t   *reg;       /* base of `capacity` consecutive 64-bit registers */
+    uint32_t    capacity;  /* depth */
+    uint32_t    head;      /* dequeue offset */
+    uint32_t    tail;      /* enqueue offset */
+    atomic_flag head_lock; /* protects head */
+    atomic_flag tail_lock; /* protects tail */
+} cluster_queue_t;
+
 /* the three-level queue instances (bottom-up), each split into TASK_TYPE_CNT
  * dedicated queues keyed by task_type_t */
 extern task_queue_desc_t g_chip_queue[TASK_TYPE_CNT];
 extern task_queue_desc_t g_die_queue[DIE_QUEUE_NUM][TASK_TYPE_CNT];
-extern task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
+extern cluster_queue_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
 
 /* complete queue instances (finished task_ids, no task_type split) */
 extern task_queue_desc_t g_die_complete_queue[DIE_COMPLETE_QUEUE_NUM];
-extern task_queue_desc_t g_cluster_complete_queue[CLUSTER_COMPLETE_QUEUE_NUM];
+extern cluster_queue_t g_cluster_complete_queue[CLUSTER_COMPLETE_QUEUE_NUM];
 
 /* build all queues bottom-up */
 void queue_init(void);
@@ -139,6 +169,10 @@ void queue_init(void);
  * the first parameter is the queue's hardware register base address */
 bool gqm_push(uint64_t queue_base, uint64_t task);
 bool gqm_pop(uint64_t queue_base, uint64_t *task);
+
+/* CTR cluster queue enqueue/dequeue (ring buffer + head/tail locks) */
+bool cluster_queue_push(cluster_queue_t *q, uint64_t task);
+bool cluster_queue_pop(cluster_queue_t *q, uint64_t *task);
 
 /* total_task_coord[]: task_id -> the (die_id, cluster_id) coordinate of the
  * queue it was last pushed to / popped from. The array is defined once by the

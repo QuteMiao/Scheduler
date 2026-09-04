@@ -50,7 +50,7 @@ void resolve_dep(uint32_t task_id, int cluster_id) {
 void deal_completed_queue(int start_idx, int end_idx) {
     for (int cluster_id = start_idx; cluster_id < end_idx; cluster_id++) {
         uint64_t task_id;
-        while (gqm_pop(g_cluster_complete_queue[cluster_id].base, &task_id)) {
+        while (cluster_queue_pop(&g_cluster_complete_queue[cluster_id], &task_id)) {
             resolve_dep((uint32_t)task_id, cluster_id);
         }
     }

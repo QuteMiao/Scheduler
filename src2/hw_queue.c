@@ -6,20 +6,31 @@
  * --------------------------------------------------------------------- */
 task_queue_desc_t g_chip_queue[TASK_TYPE_CNT];
 task_queue_desc_t g_die_queue[DIE_QUEUE_NUM][TASK_TYPE_CNT];
-task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
+cluster_queue_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
 
 task_queue_desc_t g_die_complete_queue[DIE_COMPLETE_QUEUE_NUM];
-task_queue_desc_t g_cluster_complete_queue[CLUSTER_COMPLETE_QUEUE_NUM];
+cluster_queue_t g_cluster_complete_queue[CLUSTER_COMPLETE_QUEUE_NUM];
+
+/* CTR (Cluster Tensor Register) storage: consecutive 64-bit registers backing
+ * the cluster dispatch queues and the cluster complete queues. */
+static uint64_t g_cluster_queue_reg[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT][CLUSTER_QUEUE_DEPTH];
+static uint64_t g_cluster_complete_queue_reg[CLUSTER_COMPLETE_QUEUE_NUM][CLUSTER_COMPLETE_QUEUE_DEPTH];
 
 /* build the three-level queues bottom-up, TASK_TYPE_CNT queues per level */
 void queue_init(void)
 {
-    /* level 0: cluster queues, 6 * 2 = 12 clusters x 3 types */
+    /* level 0: cluster queues, 6 * 2 = 12 clusters x 3 types, CTR registers */
     for (uint8_t die = 0; die < DIE_NUM; die++) {
         for (uint8_t cluster = 0; cluster < CLUSTER_PER_DIE; cluster++) {
+            uint8_t c = die * CLUSTER_PER_DIE + cluster;
             for (uint8_t t = 0; t < TASK_TYPE_CNT; t++) {
-                g_cluster_queue[die * CLUSTER_PER_DIE + cluster][t].base =
-                    cluster_queue_base(die, cluster, (task_type_t)t);
+                cluster_queue_t *q = &g_cluster_queue[c][t];
+                q->reg      = g_cluster_queue_reg[c][t];
+                q->capacity = CLUSTER_QUEUE_DEPTH;
+                q->head     = 0;
+                q->tail     = 0;
+                atomic_flag_clear(&q->head_lock);
+                atomic_flag_clear(&q->tail_lock);
             }
         }
     }
@@ -36,16 +47,71 @@ void queue_init(void)
         g_chip_queue[t].base = chip_queue_base((task_type_t)t);
     }
 
-    /* complete queues: 12 cluster + 2 die (no task_type split) */
+    /* complete queues: 12 cluster (CTR registers) + 2 die (GQM), no type split */
     for (uint8_t die = 0; die < DIE_NUM; die++) {
         for (uint8_t cluster = 0; cluster < CLUSTER_PER_DIE; cluster++) {
-            g_cluster_complete_queue[die * CLUSTER_PER_DIE + cluster].base =
-                cluster_complete_queue_base(die, cluster);
+            uint8_t c = die * CLUSTER_PER_DIE + cluster;
+            cluster_queue_t *q = &g_cluster_complete_queue[c];
+            q->reg      = g_cluster_complete_queue_reg[c];
+            q->capacity = CLUSTER_COMPLETE_QUEUE_DEPTH;
+            q->head     = 0;
+            q->tail     = 0;
+            atomic_flag_clear(&q->head_lock);
+            atomic_flag_clear(&q->tail_lock);
         }
     }
     for (uint8_t die = 0; die < DIE_NUM; die++) {
         g_die_complete_queue[die].base = die_complete_queue_base(die);
     }
+}
+
+/* ---------------------------------------------------------------------
+ * CTR cluster queue enqueue / dequeue (ring buffer + head/tail locks).
+ * --------------------------------------------------------------------- */
+
+static inline void cq_lock(atomic_flag *lock)
+{
+    while (atomic_flag_test_and_set_explicit(lock, memory_order_acquire)) {
+        /* spin */
+    }
+}
+
+static inline void cq_unlock(atomic_flag *lock)
+{
+    atomic_flag_clear_explicit(lock, memory_order_release);
+}
+
+bool cluster_queue_push(cluster_queue_t *q, uint64_t task)
+{
+    cq_lock(&q->tail_lock);
+
+    uint32_t next = (q->tail + 1) % q->capacity;
+    if (next == q->head) {          /* full: one slot reserved */
+        cq_unlock(&q->tail_lock);
+        return false;
+    }
+
+    q->reg[q->tail] = task;
+    q->tail = next;
+
+    cq_unlock(&q->tail_lock);
+    return true;
+}
+
+bool cluster_queue_pop(cluster_queue_t *q, uint64_t *task)
+{
+    cq_lock(&q->head_lock);
+
+    if (q->head == q->tail) {       /* empty */
+        cq_unlock(&q->head_lock);
+        return false;
+    }
+
+    *task = q->reg[q->head];
+    q->head = (q->head + 1) % q->capacity;
+
+    cq_unlock(&q->head_lock);
+    return true;
 }
 
 /* ---------------------------------------------------------------------
@@ -64,7 +130,7 @@ bool queue_push(uint32_t core_id, task_type_t type, uint64_t task)
     uint8_t cluster_q  = die_id * CLUSTER_PER_DIE + cluster_id;
 
     /* level 0: nearest cluster queue of the given type */
-    if (gqm_push(g_cluster_queue[cluster_q][type].base, task)) {
+    if (cluster_queue_push(&g_cluster_queue[cluster_q][type], task)) {
         task_coord[task_id] = TASK_COORD(die_id, cluster_id);
         return true;
     }
@@ -91,7 +157,7 @@ bool queue_pop(uint32_t core_id, task_type_t type, uint64_t *task)
     uint8_t cluster_q  = die_id * CLUSTER_PER_DIE + cluster_id;
 
     /* level 0: nearest cluster queue of the given type */
-    if (gqm_pop(g_cluster_queue[cluster_q][type].base, task)) {
+    if (cluster_queue_pop(&g_cluster_queue[cluster_q][type], task)) {
         task_coord[(uint32_t)*task] = TASK_COORD(die_id, cluster_id);
         return true;
     }
@@ -131,7 +197,7 @@ bool queue_push_to_pre_coord(int coord, task_type_t type, uint64_t task)
      * predecessor's die/cluster is unknown, i.e. it was demoted upward) */
     if (die_id < DIE_NUM && cluster_id < CLUSTER_PER_DIE) {
         uint8_t cluster_q = die_id * CLUSTER_PER_DIE + cluster_id;
-        if (gqm_push(g_cluster_queue[cluster_q][type].base, task)) {
+        if (cluster_queue_push(&g_cluster_queue[cluster_q][type], task)) {
             task_coord[task_id] = TASK_COORD(die_id, cluster_id);
             return true;
         }
@@ -167,7 +233,7 @@ bool queue_push_by_cluster(uint32_t cluster_id, task_type_t type, uint64_t task)
     uint32_t task_id = (uint32_t)task;
 
     /* level 0: the target cluster queue of the given type */
-    if (gqm_push(g_cluster_queue[cluster_id][type].base, task)) {
+    if (cluster_queue_push(&g_cluster_queue[cluster_id][type], task)) {
         task_coord[task_id] = TASK_COORD(die_id, cluster_id);
         return true;
     }
@@ -197,7 +263,7 @@ bool complete_queue_push(uint32_t core_id, uint64_t task)
     uint8_t cluster_q  = die_id * CLUSTER_PER_DIE + cluster_id;
 
     /* level 0: nearest cluster complete queue */
-    if (gqm_push(g_cluster_complete_queue[cluster_q].base, task)) {
+    if (cluster_queue_push(&g_cluster_complete_queue[cluster_q], task)) {
         return true;
     }
 
@@ -216,7 +282,7 @@ bool complete_queue_pop(uint32_t core_id, uint64_t *task)
     uint8_t cluster_q  = die_id * CLUSTER_PER_DIE + cluster_id;
 
     /* level 0: nearest cluster complete queue */
-    if (gqm_pop(g_cluster_complete_queue[cluster_q].base, task)) {
+    if (cluster_queue_pop(&g_cluster_complete_queue[cluster_q], task)) {
         return true;
     }
 
