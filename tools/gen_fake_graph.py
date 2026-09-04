@@ -252,12 +252,18 @@ def generate_header(args: argparse.Namespace) -> str:
     total_pre_cnt_vals = [0] * total_cnt
     total_task_state_vals = [0] * total_cnt
     total_task_coord_vals = [0] * total_cnt
+    total_pred_xor_vals = [0] * total_cnt
     for group in groups:
         for i, tid in enumerate(group["task_id"]):
             pos = id_to_pos[tid]
             total_type_vals[pos] = group["type"][i]
             total_duration_vals[pos] = group["duration"][i]
             total_pre_cnt_vals[pos] = group["pre_cnt"][i]
+            base = group["pre_idx"][i]
+            acc = 0
+            for k in range(base, base + group["pre_cnt"][i]):
+                acc ^= group["predecessors"][k]
+            total_pred_xor_vals[pos] = acc
 
     lines = []
     guard = f"CASES_STATIC_{name.upper()}_SUBGRAPH_H"
@@ -284,8 +290,10 @@ def generate_header(args: argparse.Namespace) -> str:
     lines.append(" * keep it on its own 64-byte cache line to avoid false sharing. */")
     lines.append(f"static _Alignas(CACHE_LINE_SIZE) int total_pre_cnt[{task_cnt}] = {{{_array_body(total_pre_cnt_vals)}}};")
     lines.append(f"static char total_task_state[{task_cnt}] = {{{_array_body(total_task_state_vals)}}};")
-    lines.append("/* total_task_coord[]: task -> cluster affinity, initialized to 0. */")
+    lines.append("/* total_task_coord[]: task_id -> packed (die_id, cluster_id), initialized to 0. */")
     lines.append(f"static int total_task_coord[{task_cnt}] = {{{_array_body(total_task_coord_vals)}}};")
+    lines.append("/* total_pred_xor[]: XOR of every predecessor id of each task. */")
+    lines.append(f"uint32_t total_pred_xor[{task_cnt}] = {{{_array_body(total_pred_xor_vals)}}};")
     lines.append("")
 
     # Per-subgraph arrays.

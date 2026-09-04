@@ -5,6 +5,15 @@
 #include <time.h>
 #include <stdio.h>
 
+#ifndef SCHEDULER_CASE
+#define SCHEDULER_CASE cases/qwen3_14b_decode_subgraph.h
+#endif
+
+/* Macro to stringify the include directive properly */
+#define __INCLUDE(x) #x
+#define _INCLUDE_FILE(x) __INCLUDE(x)
+#include _INCLUDE_FILE(SCHEDULER_CASE)
+
 #include "painter.h"
 #include "log.h"
 
@@ -20,12 +29,12 @@ uint32_t commit_task_id[PAINTER_THREAD_CNT] = {0, 0};
 extern cacheline_bool_t g_is_done;
 uint32_t completed_task_cnt = 0;
 
-void send_2_ready_queue(uint32_t ready_cnt[], uint32_t rq_buf[][RQ_BATCH_SIZE]) {
+void send_2_ready_queue(queue_t *queue, uint32_t ready_cnt[], uint32_t rq_buf[][RQ_BATCH_SIZE]) {
     for (uint32_t j = 0; j < TASK_TYPE_CNT; j++) {
         if (ready_cnt[j] > 0)
         {
             WORKER_LOGF("batch_enqueue,%u,cnt,%u,first,%u", j, ready_cnt[j], rq_buf[j][0]);
-            batch_enqueue(&g_ready_queue[j], rq_buf[j], ready_cnt[j]);
+            batch_enqueue(&queue[j], rq_buf[j], ready_cnt[j]);
         }
     }
 }
@@ -45,7 +54,9 @@ void init_queue(void)
     }
 }
 
-void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf, uint32_t rq_buf[][RQ_BATCH_SIZE], uint32_t* ready_cnt) {
+void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf,
+                 uint32_t rq_buf[][RQ_BATCH_SIZE], uint32_t* ready_cnt,
+                 uint32_t nrq_buf[][RQ_BATCH_SIZE], uint32_t* near_cnt) {
     uint32_t task_id;
     uint32_t succ_id;
     uint32_t succ_cnt;
@@ -62,12 +73,24 @@ void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf, uint32_t rq_buf[
             if (total_task_state[succ_id] == 1)
                 continue;
             test_graph[tid].total_pre_cnt[succ_id]--;
+            total_pred_xor[succ_id] ^= task_id;
             WORKER_LOGF("painter,task_id,%u,successor_id,%u,predecessor_cnt,%d", task_id, succ_id, test_graph[tid].total_pre_cnt[succ_id]);
             if (test_graph[tid].total_pre_cnt[succ_id] < 1) {
                 task_type_t type = total_type[succ_id];
                 rq_buf[type][ready_cnt[type]] = succ_id;
                 ready_cnt[type]++;
                 WORKER_LOGF("ready,task_id,%u,type,%d,cnt,%u", succ_id, type, ready_cnt[type]);
+            }
+            else if (test_graph[tid].total_pre_cnt[succ_id] == 1) {
+                /* One predecessor left, so the task can already be placed on a
+                 * unit and wait there. Marking it queued takes it out of
+                 * dependency tracking for good, which also freezes total_pred_xor -
+                 * the id of the predecessor it is waiting for. */
+                task_type_t type = total_type[succ_id];
+                total_task_state[succ_id] = 1;
+                nrq_buf[type][near_cnt[type]] = succ_id;
+                near_cnt[type]++;
+                WORKER_LOGF("near_ready,task_id,%u,pred,%u,type,%d", succ_id, total_pred_xor[succ_id], type);
             }
         }
     }
@@ -76,6 +99,8 @@ void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf, uint32_t rq_buf[
 void deal_completed_queue(int tid) {
     uint32_t rq_buf[TASK_TYPE_CNT][RQ_BATCH_SIZE];
     uint32_t ready_cnt[TASK_TYPE_CNT] = {0, 0};
+    uint32_t nrq_buf[TASK_TYPE_CNT][RQ_BATCH_SIZE];
+    uint32_t near_cnt[TASK_TYPE_CNT] = {0, 0};
 
     /* Shared completed queue: every painter drains the same ring
      * independently via its own read cursor. Zero-copy: grab a batch straight
@@ -93,10 +118,11 @@ void deal_completed_queue(int tid) {
         }
     }
     
-    resolve_dep(tid, cnt, cq_buf, rq_buf, ready_cnt);
+    resolve_dep(tid, cnt, cq_buf, rq_buf, ready_cnt, nrq_buf, near_cnt);
     /* Batch consumed: move this painter's read cursor forward. */
     completed_queue_read_commit(&g_completed_queue, tid, cnt);
-    send_2_ready_queue(ready_cnt, rq_buf);
+    send_2_ready_queue(g_ready_queue, ready_cnt, rq_buf);
+    send_2_ready_queue(g_near_ready_queue, near_cnt, nrq_buf);
 }
 
 void *painter(void *arg)

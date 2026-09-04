@@ -10,15 +10,6 @@
 #include "conf.h"
 #include "dispatch.h"
 
-#ifndef SCHEDULER_CASE
-#define SCHEDULER_CASE cases/qwen3_14b_decode_subgraph.h
-#endif
-
-/* Macro to stringify the include directive properly */
-#define __INCLUDE(x) #x
-#define _INCLUDE_FILE(x) __INCLUDE(x)
-#include _INCLUDE_FILE(SCHEDULER_CASE)
-
 #include "task.h"
 #include "queue.h"
 
