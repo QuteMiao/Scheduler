@@ -41,10 +41,16 @@
 /* number of task types -> a dedicated queue per type at every level */
 #define TASK_TYPE_CNT      3                           /* CUBE / VECTOR / MIX */
 
+/* complete queues: store finished task_ids. Unlike the dispatch queues above,
+ * they are NOT split by task_type — one complete queue per cluster and per die. */
+#define CLUSTER_COMPLETE_QUEUE_NUM CLUSTER_QUEUE_NUM   /* 12 */
+#define DIE_COMPLETE_QUEUE_NUM     DIE_QUEUE_NUM       /* 2 */
+
 #define TCM_BASE 0x1
 #define TCM_DIE_OFFSET 0x1
 #define TCM_CLUSTER_OFFSET 0x1
 #define TCM_TYPE_OFFSET 0x1
+#define TCM_COMPLETE_OFFSET 0x1
 
 #define CHIP_QUEUE_SIZE 0x1
 #define DIE_QUEUE_SIZE 0x1
@@ -84,6 +90,22 @@ static inline uint64_t cluster_queue_base(uint8_t die_id, uint8_t cluster_id, ta
          + (uint64_t)TCM_TYPE_OFFSET * (uint64_t)type;
 }
 
+/* complete queue base addresses: no task_type dimension */
+static inline uint64_t die_complete_queue_base(uint8_t die_id)
+{
+    return (uint64_t)TCM_BASE
+         + (uint64_t)TCM_COMPLETE_OFFSET
+         + (uint64_t)TCM_DIE_OFFSET * (uint64_t)die_id;
+}
+
+static inline uint64_t cluster_complete_queue_base(uint8_t die_id, uint8_t cluster_id)
+{
+    return (uint64_t)TCM_BASE
+         + (uint64_t)TCM_COMPLETE_OFFSET
+         + (uint64_t)TCM_DIE_OFFSET * (uint64_t)die_id
+         + (uint64_t)TCM_CLUSTER_OFFSET * (uint64_t)cluster_id;
+}
+
 /* resolve the owning die / cluster from a continuous core_id */
 static inline uint8_t core_id_to_die(uint32_t core_id)
 {
@@ -105,6 +127,10 @@ typedef struct {
 extern task_queue_desc_t g_chip_queue[TASK_TYPE_CNT];
 extern task_queue_desc_t g_die_queue[DIE_QUEUE_NUM][TASK_TYPE_CNT];
 extern task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
+
+/* complete queue instances (finished task_ids, no task_type split) */
+extern task_queue_desc_t g_die_complete_queue[DIE_COMPLETE_QUEUE_NUM];
+extern task_queue_desc_t g_cluster_complete_queue[CLUSTER_COMPLETE_QUEUE_NUM];
 
 /* build all queues bottom-up */
 void queue_init(void);
@@ -140,5 +166,16 @@ bool queue_pop(uint32_t core_id, task_type_t type, uint64_t *task);
  * data. coord is a TASK_COORD() value; the cluster -> die -> chip fallback
  * mirrors queue_push(). */
 bool queue_push_to_pre_coord(int coord, task_type_t type, uint64_t task);
+
+/* PUSH by global cluster_id (0..CLUSTER_NUM-1) and task_type. The task is
+ * pushed to that cluster's queue of the given type; on failure it falls back
+ * to the owning die queue. */
+bool queue_push_by_cluster(uint32_t cluster_id, task_type_t type, uint64_t task);
+
+/* Complete queue PUSH/POP by continuous core_id (no task_type). A finished
+ * task's id is pushed to the nearest cluster complete queue, falling back to
+ * the owning die complete queue. */
+bool queue_push_complete(uint32_t core_id, uint64_t task);
+bool queue_pop_complete(uint32_t core_id, uint64_t *task);
 
 #endif /* __HW_QUEUE_H__ */

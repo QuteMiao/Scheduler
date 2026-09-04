@@ -8,6 +8,9 @@ task_queue_desc_t g_chip_queue[TASK_TYPE_CNT];
 task_queue_desc_t g_die_queue[DIE_QUEUE_NUM][TASK_TYPE_CNT];
 task_queue_desc_t g_cluster_queue[CLUSTER_QUEUE_NUM][TASK_TYPE_CNT];
 
+task_queue_desc_t g_die_complete_queue[DIE_COMPLETE_QUEUE_NUM];
+task_queue_desc_t g_cluster_complete_queue[CLUSTER_COMPLETE_QUEUE_NUM];
+
 /* build the three-level queues bottom-up, TASK_TYPE_CNT queues per level */
 void queue_init(void)
 {
@@ -31,6 +34,17 @@ void queue_init(void)
     /* level 2: chip queue, 1 chip x 3 types */
     for (uint8_t t = 0; t < TASK_TYPE_CNT; t++) {
         g_chip_queue[t].base = chip_queue_base((task_type_t)t);
+    }
+
+    /* complete queues: 12 cluster + 2 die (no task_type split) */
+    for (uint8_t die = 0; die < DIE_NUM; die++) {
+        for (uint8_t cluster = 0; cluster < CLUSTER_PER_DIE; cluster++) {
+            g_cluster_complete_queue[die * CLUSTER_PER_DIE + cluster].base =
+                cluster_complete_queue_base(die, cluster);
+        }
+    }
+    for (uint8_t die = 0; die < DIE_NUM; die++) {
+        g_die_complete_queue[die].base = die_complete_queue_base(die);
     }
 }
 
@@ -134,6 +148,80 @@ bool queue_push_to_pre_coord(int coord, task_type_t type, uint64_t task)
     /* level 2: chip queue (die full/unknown -> die/cluster both unknown) */
     if (gqm_push(g_chip_queue[type].base, task)) {
         task_coord[task_id] = TASK_COORD(TASK_COORD_INVALID, TASK_COORD_INVALID);
+        return true;
+    }
+
+    return false;
+}
+
+/* ---------------------------------------------------------------------
+ * PUSH by global cluster_id (0..CLUSTER_NUM-1) and task type.
+ *
+ * Unlike queue_push() (which resolves the cluster from a core_id), this pushes
+ * directly to the cluster queue identified by cluster_id. On failure it falls
+ * back to the owning die queue.
+ * --------------------------------------------------------------------- */
+bool queue_push_by_cluster(uint32_t cluster_id, task_type_t type, uint64_t task)
+{
+    uint8_t die_id   = (uint8_t)(cluster_id / CLUSTER_PER_DIE);
+    uint32_t task_id = (uint32_t)task;
+
+    /* level 0: the target cluster queue of the given type */
+    if (gqm_push(g_cluster_queue[cluster_id][type].base, task)) {
+        task_coord[task_id] = TASK_COORD(die_id, cluster_id);
+        return true;
+    }
+
+    /* level 1: owning die queue (cluster full -> cluster unknown) */
+    if (gqm_push(g_die_queue[die_id][type].base, task)) {
+        task_coord[task_id] = TASK_COORD(die_id, TASK_COORD_INVALID);
+        return true;
+    }
+
+    return false;
+}
+
+/* ---------------------------------------------------------------------
+ * Complete queue PUSH / POP by continuous core_id (no task_type).
+ *
+ * When a task finishes, its id is recorded in a "complete" queue so that
+ * dependents / observers can learn about the completion. The nearest cluster
+ * complete queue is tried first, falling back to the owning die complete
+ * queue. Complete queues are NOT split by task type.
+ * --------------------------------------------------------------------- */
+
+bool complete_queue_push(uint32_t core_id, uint64_t task)
+{
+    uint8_t die_id     = core_id_to_die(core_id);
+    uint8_t cluster_id = core_id_to_cluster(core_id);
+    uint8_t cluster_q  = die_id * CLUSTER_PER_DIE + cluster_id;
+
+    /* level 0: nearest cluster complete queue */
+    if (gqm_push(g_cluster_complete_queue[cluster_q].base, task)) {
+        return true;
+    }
+
+    /* level 1: owning die complete queue */
+    if (gqm_push(g_die_complete_queue[die_id].base, task)) {
+        return true;
+    }
+
+    return false;
+}
+
+bool complete_queue_pop(uint32_t core_id, uint64_t *task)
+{
+    uint8_t die_id     = core_id_to_die(core_id);
+    uint8_t cluster_id = core_id_to_cluster(core_id);
+    uint8_t cluster_q  = die_id * CLUSTER_PER_DIE + cluster_id;
+
+    /* level 0: nearest cluster complete queue */
+    if (gqm_pop(g_cluster_complete_queue[cluster_q].base, task)) {
+        return true;
+    }
+
+    /* level 1: owning die complete queue */
+    if (gqm_pop(g_die_complete_queue[die_id].base, task)) {
         return true;
     }
 
