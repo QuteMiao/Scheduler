@@ -293,7 +293,7 @@ def generate_header(args: argparse.Namespace) -> str:
     lines.append("/* total_task_coord[]: task_id -> packed (die_id, cluster_id), initialized to 0. */")
     lines.append(f"static int total_task_coord[{task_cnt}] = {{{_array_body(total_task_coord_vals)}}};")
     lines.append("/* total_pred_xor[]: XOR of every predecessor id of each task. */")
-    lines.append(f"static const uint32_t total_pred_xor[{task_cnt}] = {{{_array_body(total_pred_xor_vals)}}};")
+    lines.append(f"uint32_t total_pred_xor[{task_cnt}] = {{{_array_body(total_pred_xor_vals)}}};")
     lines.append("")
 
     # Per-subgraph arrays.

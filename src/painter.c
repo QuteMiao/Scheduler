@@ -5,6 +5,15 @@
 #include <time.h>
 #include <stdio.h>
 
+#ifndef SCHEDULER_CASE
+#define SCHEDULER_CASE cases/qwen3_14b_decode_subgraph.h
+#endif
+
+/* Macro to stringify the include directive properly */
+#define __INCLUDE(x) #x
+#define _INCLUDE_FILE(x) __INCLUDE(x)
+#include _INCLUDE_FILE(SCHEDULER_CASE)
+
 #include "painter.h"
 #include "log.h"
 
@@ -19,10 +28,6 @@ uint32_t commit_task_id[PAINTER_THREAD_CNT] = {0, 0};
 
 extern cacheline_bool_t g_is_done;
 uint32_t completed_task_cnt = 0;
-
-/* g_pred_xor[S] = XOR of the ids of S's not-yet-completed predecessors, so once
- * total_pre_cnt[S] drops to 1 it holds that last predecessor's task id. */
-uint32_t g_pred_xor[MAX_TASK_CNT];
 
 void send_2_ready_queue(queue_t *queue, uint32_t ready_cnt[], uint32_t rq_buf[][RQ_BATCH_SIZE]) {
     for (uint32_t j = 0; j < TASK_TYPE_CNT; j++) {
@@ -49,14 +54,6 @@ void init_queue(void)
     }
 }
 
-/* Seeds g_pred_xor[] from total_pred_xor[] in the case header. Must run before any
- * thread starts: once the painters are up, resolve_dep() folds each completed
- * predecessor out of that same array. */
-void init_pred_xor(void)
-{
-    memcpy(g_pred_xor, total_pred_xor, total_task_cnt * sizeof(g_pred_xor[0]));
-}
-
 void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf,
                  uint32_t rq_buf[][RQ_BATCH_SIZE], uint32_t* ready_cnt,
                  uint32_t nrq_buf[][RQ_BATCH_SIZE], uint32_t* near_cnt) {
@@ -76,7 +73,7 @@ void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf,
             if (total_task_state[succ_id] == 1)
                 continue;
             test_graph[tid].total_pre_cnt[succ_id]--;
-            g_pred_xor[succ_id] ^= task_id;
+            total_pred_xor[succ_id] ^= task_id;
             WORKER_LOGF("painter,task_id,%u,successor_id,%u,predecessor_cnt,%d", task_id, succ_id, test_graph[tid].total_pre_cnt[succ_id]);
             if (test_graph[tid].total_pre_cnt[succ_id] < 1) {
                 task_type_t type = total_type[succ_id];
@@ -87,13 +84,13 @@ void resolve_dep(int tid, uint32_t cnt, const uint32_t* cq_buf,
             else if (test_graph[tid].total_pre_cnt[succ_id] == 1) {
                 /* One predecessor left, so the task can already be placed on a
                  * unit and wait there. Marking it queued takes it out of
-                 * dependency tracking for good, which also freezes g_pred_xor -
+                 * dependency tracking for good, which also freezes total_pred_xor -
                  * the id of the predecessor it is waiting for. */
                 task_type_t type = total_type[succ_id];
                 total_task_state[succ_id] = 1;
                 nrq_buf[type][near_cnt[type]] = succ_id;
                 near_cnt[type]++;
-                WORKER_LOGF("near_ready,task_id,%u,pred,%u,type,%d", succ_id, g_pred_xor[succ_id], type);
+                WORKER_LOGF("near_ready,task_id,%u,pred,%u,type,%d", succ_id, total_pred_xor[succ_id], type);
             }
         }
     }
