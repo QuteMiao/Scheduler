@@ -210,6 +210,23 @@ typedef struct {
     atomic_flag tail_lock; /* protects tail */
 } cluster_queue_t;
 
+/* ---------------------------------------------------------------------
+ * CTR register read/write primitives.
+ *
+ * These are the ONLY places that touch a cluster queue's hardware
+ * register. They are currently plain volatile memory accesses; they will
+ * later be replaced by dedicated CTR read/write hardware instructions.
+ * --------------------------------------------------------------------- */
+static inline uint64_t ctr_reg_read(uint64_t reg_addr)
+{
+    return *(volatile uint64_t *)reg_addr;
+}
+
+static inline void ctr_reg_write(uint64_t reg_addr, uint64_t value)
+{
+    *(volatile uint64_t *)reg_addr = value;
+}
+
 /* the three-level queue instances (bottom-up), each split into TASK_TYPE_CNT
  * dedicated queues keyed by task_type_t */
 extern task_queue_desc_t g_chip_queue[TASK_TYPE_CNT];

@@ -156,7 +156,7 @@ bool cluster_queue_push(cluster_queue_t *q, uint64_t task)
         return false;
     }
 
-    *(volatile uint64_t *)q->reg_addrs[q->tail] = task;
+    ctr_reg_write(q->reg_addrs[q->tail], task);
     q->tail = next;
 
     cq_unlock(&q->tail_lock);
@@ -172,7 +172,7 @@ bool cluster_queue_pop(cluster_queue_t *q, uint64_t *task)
         return false;
     }
 
-    *task = *(volatile uint64_t *)q->reg_addrs[q->head];
+    *task = ctr_reg_read(q->reg_addrs[q->head]);
     q->head = (q->head + 1) % q->capacity;
 
     cq_unlock(&q->head_lock);
