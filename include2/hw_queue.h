@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 
+#include "a6.h"
+
 #define CLUSTER_PER_DIE 6
 #define AICORE_PER_CLUSTER 10
 #define CUBE_PER_AICORE 1
@@ -107,6 +109,35 @@ static inline uint64_t cluster_complete_queue_base(uint8_t die_id, uint8_t clust
          + (uint64_t)TCM_CLUSTER_OFFSET * (uint64_t)cluster_id;
 }
 
+/* ---------------------------------------------------------------------
+ * AICore register file base addresses (from a6.h). Each AICore owns one
+ * CUBE unit and one VECTOR unit; the unit base is:
+ *
+ *   AICORE_REGISTER_BASE
+ *     + die_id    * AICORE_DIE_OFFSET
+ *     + aicore_id * AICORE_OFFSET
+ *     + unit offset (AICORE_CUBE_OFFSET / AICORE_VECTOR_OFFSET)
+ *
+ * `aicore_id` is the continuous AICore index inside a die
+ * (0 .. CORE_PER_DIE - 1). A single unit then spans 8 consecutive 64-bit
+ * registers (64 bytes).
+ * --------------------------------------------------------------------- */
+static inline uint64_t aicore_cube_reg_base(uint8_t die_id, uint8_t aicore_id)
+{
+    return (uint64_t)AICORE_REGISTER_BASE
+         + (uint64_t)AICORE_DIE_OFFSET * (uint64_t)die_id
+         + (uint64_t)AICORE_OFFSET     * (uint64_t)aicore_id
+         + (uint64_t)AICORE_CUBE_OFFSET;
+}
+
+static inline uint64_t aicore_vector_reg_base(uint8_t die_id, uint8_t aicore_id)
+{
+    return (uint64_t)AICORE_REGISTER_BASE
+         + (uint64_t)AICORE_DIE_OFFSET * (uint64_t)die_id
+         + (uint64_t)AICORE_OFFSET     * (uint64_t)aicore_id
+         + (uint64_t)AICORE_VECTOR_OFFSET;
+}
+
 /* resolve the owning die / cluster from a continuous core_id */
 static inline uint8_t core_id_to_die(uint32_t core_id)
 {
@@ -125,8 +156,9 @@ typedef struct {
 
 /* ---------------------------------------------------------------------
  * cluster queue: a fixed-size ring queue built on the Cluster Tensor
- * Register (CTR). Storage is NOT embedded: each queue points to `capacity`
- * consecutive 64-bit registers, addressed by head/tail offsets. Enqueue and
+ * Register (CTR). Storage is NOT embedded: each queue points to an array of
+ * `capacity` pre-computed hardware register addresses (the CTR registers are
+ * not contiguous across AICores), addressed by head/tail offsets. Enqueue and
  * dequeue use separate head/tail locks so a producer and a consumer can run
  * concurrently.
  *
@@ -139,12 +171,38 @@ typedef struct {
 /* per-cluster AICore count, used to size the register-based queues */
 #define AICORE_NUM_PER_CLUSTER AICORE_PER_CLUSTER   /* 10 */
 
-/* queue depths, expressed as consecutive 64-bit registers */
-#define CLUSTER_QUEUE_DEPTH          (2 * AICORE_NUM_PER_CLUSTER)  /* 20 */
-#define CLUSTER_COMPLETE_QUEUE_DEPTH (4 * AICORE_NUM_PER_CLUSTER)  /* 40 */
+/* ---------------------------------------------------------------------
+ * cluster queue register file (from a6.h): each AICore owns one CUBE unit
+ * and one VECTOR unit; each unit exposes 8 consecutive 64-bit registers:
+ *
+ *   reg[0..1] : dispatch cluster_queue       (CUBE/VECTOR queues)
+ *   reg[2..5] : complete_cluster_queue       (complete queue)
+ *   reg[6..7] : MIX dispatch cluster_queue   (MIX queue)
+ *
+ * The dispatch queues are split by task_type:
+ *   CUBE   -> CUBE   unit reg[0..1]   (20 slots)
+ *   VECTOR -> VECTOR unit reg[0..1]   (20 slots)
+ *   MIX    -> CUBE   unit reg[6..7]   (20 slots)
+ * The complete queue (not split by type) uses both units' reg[2..5]
+ * (80 slots). Because the registers live in separate AICore register
+ * files, their addresses are NOT contiguous.
+ * --------------------------------------------------------------------- */
+#define CTR_REG_BYTES                 8
+
+#define CLUSTER_QUEUE_REGS_PER_UNIT   2
+#define CLUSTER_QUEUE_REG_OFFSET      0
+#define MIX_QUEUE_REGS_PER_UNIT       2
+#define MIX_QUEUE_REG_OFFSET          6
+#define COMPLETE_QUEUE_REGS_PER_UNIT  4
+#define COMPLETE_QUEUE_REG_OFFSET     2
+
+/* queue depths, expressed as number of 64-bit register slots */
+#define CLUSTER_QUEUE_DEPTH          (CLUSTER_QUEUE_REGS_PER_UNIT * AICORE_NUM_PER_CLUSTER)        /* 20 */
+#define CLUSTER_MIX_QUEUE_DEPTH      (MIX_QUEUE_REGS_PER_UNIT * AICORE_NUM_PER_CLUSTER)          /* 20 */
+#define CLUSTER_COMPLETE_QUEUE_DEPTH (2 * COMPLETE_QUEUE_REGS_PER_UNIT * AICORE_NUM_PER_CLUSTER)  /* 80 */
 
 typedef struct {
-    uint64_t   *reg;       /* base of `capacity` consecutive 64-bit registers */
+    uint64_t   *reg_addrs; /* `capacity` hardware register addresses (non-contiguous) */
     uint32_t    capacity;  /* depth */
     uint32_t    head;      /* dequeue offset */
     uint32_t    tail;      /* enqueue offset */
@@ -209,7 +267,7 @@ bool queue_push_by_cluster(uint32_t cluster_id, task_type_t type, uint64_t task)
 /* Complete queue PUSH/POP by continuous core_id (no task_type). A finished
  * task's id is pushed to the nearest cluster complete queue, falling back to
  * the owning die complete queue. */
-bool queue_push_complete(uint32_t core_id, uint64_t task);
-bool queue_pop_complete(uint32_t core_id, uint64_t *task);
+bool complete_queue_push(uint32_t core_id, uint64_t task);
+bool complete_queue_pop(uint32_t core_id, uint64_t *task);
 
 #endif /* __HW_QUEUE_H__ */

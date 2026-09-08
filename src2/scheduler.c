@@ -13,15 +13,6 @@
 /* 每个调度线程负责的 cluster 数量 */
 #define CLUSTER_NUM_PER_THREAD (CLUSTER_NUM / SCHEDULER_THREAD_CNT)
 
-#define get_ipc_reg_0() 0
-#define get_ipc_reg_1() 1
-#define get_ipc_reg_2() 2
-#define get_ipc_reg_3() 3
-#define get_ipc_reg_4() 4
-#define get_ipc_reg_5() 5
-#define get_ipc_reg_6() 6
-#define get_ipc_reg_7() 7
-
 static inline uint64_t get_time_ns(void)
 {
     struct timespec ts;
