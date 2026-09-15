@@ -109,34 +109,11 @@ static inline uint64_t cluster_complete_queue_base(uint8_t die_id, uint8_t clust
          + (uint64_t)TCM_CLUSTER_OFFSET * (uint64_t)cluster_id;
 }
 
-/* ---------------------------------------------------------------------
- * AICore register file base addresses (from a6.h). Each AICore owns one
- * CUBE unit and one VECTOR unit; the unit base is:
- *
- *   AICORE_REGISTER_BASE
- *     + die_id    * AICORE_DIE_OFFSET
- *     + aicore_id * AICORE_OFFSET
- *     + unit offset (AICORE_CUBE_OFFSET / AICORE_VECTOR_OFFSET)
- *
- * `aicore_id` is the continuous AICore index inside a die
- * (0 .. CORE_PER_DIE - 1). A single unit then spans 8 consecutive 64-bit
- * registers (64 bytes).
- * --------------------------------------------------------------------- */
-static inline uint64_t aicore_cube_reg_base(uint8_t die_id, uint8_t aicore_id)
-{
-    return (uint64_t)AICORE_REGISTER_BASE
-         + (uint64_t)AICORE_DIE_OFFSET * (uint64_t)die_id
-         + (uint64_t)AICORE_OFFSET     * (uint64_t)aicore_id
-         + (uint64_t)AICORE_CUBE_OFFSET;
-}
-
-static inline uint64_t aicore_vector_reg_base(uint8_t die_id, uint8_t aicore_id)
-{
-    return (uint64_t)AICORE_REGISTER_BASE
-         + (uint64_t)AICORE_DIE_OFFSET * (uint64_t)die_id
-         + (uint64_t)AICORE_OFFSET     * (uint64_t)aicore_id
-         + (uint64_t)AICORE_VECTOR_OFFSET;
-}
+/* per-cluster contiguous SRAM backing the cluster queues (replaces the
+ * previous scattered CTR register storage). One region per cluster; each
+ * queue carves a contiguous slice from it. The slice offsets and stride are
+ * defined together with the queue depths below. */
+#define CLUSTER_SRAM_BASE 0x1ULL   /* TODO: fill in the real SRAM base address */
 
 /* resolve the owning die / cluster from a continuous core_id */
 static inline uint8_t core_id_to_die(uint32_t core_id)
@@ -155,54 +132,48 @@ typedef struct {
 } task_queue_desc_t;
 
 /* ---------------------------------------------------------------------
- * cluster queue: a fixed-size ring queue built on the Cluster Tensor
- * Register (CTR). Storage is NOT embedded: each queue points to an array of
- * `capacity` pre-computed hardware register addresses (the CTR registers are
- * not contiguous across AICores), addressed by head/tail offsets. Enqueue and
+ * cluster queue: a fixed-size ring queue backed by a contiguous SRAM slice
+ * (one SRAM region per cluster). Storage is NOT embedded: each queue stores
+ * a base address plus `capacity`, and the head/tail offsets index into the
+ * `capacity` consecutive 64-bit slots starting at `base`. Enqueue and
  * dequeue use separate head/tail locks so a producer and a consumer can run
  * concurrently.
  *
- *   head : next register offset to dequeue
- *   tail : next register offset to enqueue
+ *   head : next slot offset to dequeue
+ *   tail : next slot offset to enqueue
  *   empty: head == tail
  *   full : (tail + 1) % capacity == head  (one slot reserved)
  * --------------------------------------------------------------------- */
 
-/* per-cluster AICore count, used to size the register-based queues */
-#define AICORE_NUM_PER_CLUSTER AICORE_PER_CLUSTER   /* 10 */
-
 /* ---------------------------------------------------------------------
- * cluster queue register file (from a6.h): each AICore owns one CUBE unit
- * and one VECTOR unit; each unit exposes 8 consecutive 64-bit registers:
+ * cluster queue SRAM layout: each cluster owns one contiguous SRAM region
+ * (CLUSTER_SRAM_BASE + cluster_id * CLUSTER_SRAM_STRIDE), and every cluster
+ * queue is a fixed-size contiguous slice inside that region:
  *
- *   reg[0..1] : dispatch cluster_queue       (CUBE/VECTOR queues)
- *   reg[2..5] : complete_cluster_queue       (complete queue)
- *   reg[6..7] : MIX dispatch cluster_queue   (MIX queue)
- *
- * The dispatch queues are split by task_type:
- *   CUBE   -> CUBE   unit reg[0..1]   (20 slots)
- *   VECTOR -> VECTOR unit reg[0..1]   (20 slots)
- *   MIX    -> CUBE   unit reg[6..7]   (20 slots)
- * The complete queue (not split by type) uses both units' reg[2..5]
- * (80 slots). Because the registers live in separate AICore register
- * files, their addresses are NOT contiguous.
+ *   CUBE queue     -> CLUSTER_SRAM_CUBE_OFFSET     (20 slots)
+ *   VECTOR queue   -> CLUSTER_SRAM_VECTOR_OFFSET   (20 slots)
+ *   MIX queue      -> CLUSTER_SRAM_MIX_OFFSET      (20 slots)
+ *   complete queue -> CLUSTER_SRAM_COMPLETE_OFFSET (80 slots)
  * --------------------------------------------------------------------- */
-#define CTR_REG_BYTES                 8
+#define CLUSTER_SRAM_SLOT_BYTES      8
 
-#define CLUSTER_QUEUE_REGS_PER_UNIT   2
-#define CLUSTER_QUEUE_REG_OFFSET      0
-#define MIX_QUEUE_REGS_PER_UNIT       2
-#define MIX_QUEUE_REG_OFFSET          6
-#define COMPLETE_QUEUE_REGS_PER_UNIT  4
-#define COMPLETE_QUEUE_REG_OFFSET     2
+#define CLUSTER_QUEUE_DEPTH          20
+#define CLUSTER_MIX_QUEUE_DEPTH      20
+#define CLUSTER_COMPLETE_QUEUE_DEPTH 80
 
-/* queue depths, expressed as number of 64-bit register slots */
-#define CLUSTER_QUEUE_DEPTH          (CLUSTER_QUEUE_REGS_PER_UNIT * AICORE_NUM_PER_CLUSTER)        /* 20 */
-#define CLUSTER_MIX_QUEUE_DEPTH      (MIX_QUEUE_REGS_PER_UNIT * AICORE_NUM_PER_CLUSTER)          /* 20 */
-#define CLUSTER_COMPLETE_QUEUE_DEPTH (2 * COMPLETE_QUEUE_REGS_PER_UNIT * AICORE_NUM_PER_CLUSTER)  /* 80 */
+#define CLUSTER_SRAM_CUBE_OFFSET     0
+#define CLUSTER_SRAM_VECTOR_OFFSET   (CLUSTER_SRAM_CUBE_OFFSET + CLUSTER_QUEUE_DEPTH * CLUSTER_SRAM_SLOT_BYTES)
+#define CLUSTER_SRAM_MIX_OFFSET      (CLUSTER_SRAM_VECTOR_OFFSET + CLUSTER_QUEUE_DEPTH * CLUSTER_SRAM_SLOT_BYTES)
+#define CLUSTER_SRAM_COMPLETE_OFFSET (CLUSTER_SRAM_MIX_OFFSET + CLUSTER_MIX_QUEUE_DEPTH * CLUSTER_SRAM_SLOT_BYTES)
+#define CLUSTER_SRAM_STRIDE          (CLUSTER_SRAM_COMPLETE_OFFSET + CLUSTER_COMPLETE_QUEUE_DEPTH * CLUSTER_SRAM_SLOT_BYTES)
+
+static inline uint64_t cluster_sram_base(uint8_t cluster_id)
+{
+    return CLUSTER_SRAM_BASE + (uint64_t)cluster_id * CLUSTER_SRAM_STRIDE;
+}
 
 typedef struct {
-    uint64_t   *reg_addrs; /* `capacity` hardware register addresses (non-contiguous) */
+    uint64_t    base;      /* SRAM base address of `capacity` consecutive 64-bit slots */
     uint32_t    capacity;  /* depth */
     uint32_t    head;      /* dequeue offset */
     uint32_t    tail;      /* enqueue offset */
@@ -211,20 +182,20 @@ typedef struct {
 } cluster_queue_t;
 
 /* ---------------------------------------------------------------------
- * CTR register read/write primitives.
+ * cluster queue SRAM read/write primitives.
  *
- * These are the ONLY places that touch a cluster queue's hardware
- * register. They are currently plain volatile memory accesses; they will
- * later be replaced by dedicated CTR read/write hardware instructions.
+ * These are the ONLY places that touch a cluster queue's SRAM storage.
+ * They are currently plain volatile memory accesses; they will later be
+ * replaced by dedicated hardware instructions.
  * --------------------------------------------------------------------- */
-static inline uint64_t ctr_reg_read(uint64_t reg_addr)
+static inline uint64_t sram_read(uint64_t addr)
 {
-    return *(volatile uint64_t *)reg_addr;
+    return *(volatile uint64_t *)addr;
 }
 
-static inline void ctr_reg_write(uint64_t reg_addr, uint64_t value)
+static inline void sram_write(uint64_t addr, uint64_t value)
 {
-    *(volatile uint64_t *)reg_addr = value;
+    *(volatile uint64_t *)addr = value;
 }
 
 /* the three-level queue instances (bottom-up), each split into TASK_TYPE_CNT
@@ -245,7 +216,7 @@ void queue_init(void);
 bool gqm_push(uint64_t queue_base, uint64_t task);
 bool gqm_pop(uint64_t queue_base, uint64_t *task);
 
-/* CTR cluster queue enqueue/dequeue (ring buffer + head/tail locks) */
+/* SRAM cluster queue enqueue/dequeue (ring buffer + head/tail locks) */
 bool cluster_queue_push(cluster_queue_t *q, uint64_t task);
 bool cluster_queue_pop(cluster_queue_t *q, uint64_t *task);
 
