@@ -2,9 +2,9 @@
   "name": "deepseek_v4_csa_b",
   "source_benchmark": "deepseek-v4-csa-b",
   "source_files_sha256": {
-    "deps.json": "7987ca29c59dfde85becf2363ce08ffbc152f762a2220ed0a12fbcfc7a382dce",
+    "deps.json": "1763afcdaa926c0adb1de3b175659536aabbf87faa2589bd08ff81b9eed7a150",
     "name_map.json": "b1506974de0be558c40401c1202b67bc0147a62c7787edd25108a8e705ef24dd",
-    "Chip_swimlane_records.json": "3627e87da8ac12dfcc7a121bb0a29f31a9072c9b7c51d661cb2890a4a70d38b0"
+    "Chip_swimlane_records.json": "f69aeaff929dc53365bdd453e77db4f3da3ce6cb3bf12c8d86fdbf8bb68b9b7f"
   },
   "capture_subset": "Swimlane preserves metadata and unmodified aicore_tasks; scheduler/host timing is not used.",
   "expected_logical_tasks": 70,
@@ -22,27 +22,31 @@
     "seed": 1234,
     "start_positions": [
       8192,
-      0,
-      2,
-      3,
-      7,
-      127,
-      128,
-      255,
-      511,
       8192,
-      0,
-      2,
-      3,
-      7,
-      127,
-      128,
-      255,
-      511,
       8192,
-      0
-    ]
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192
+    ],
+    "kv_seq_len": 8194
   },
   "source_pypto_lib_base_commit": "092efde7317095c468fba9670efdb3ee6bd9de29",
-  "source_note": "Capture hashes identify the exact dataset; the base commit alone does not identify local tiling changes."
+  "source_note": "Capture hashes identify the exact dataset; the base commit alone does not identify local tiling changes.",
+  "capture_task": "task_20260915_003507_21096026192",
+  "source_benchmark_commit": "6ebf33cae0c5bf553b0955ab5d4993247c1f487d",
+  "source_benchmark_repository": "https://github.com/yanghaoran29/V200-benchmark"
 }

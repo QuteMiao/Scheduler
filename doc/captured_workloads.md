@@ -11,7 +11,7 @@ model changes; the paired capture snapshots are the generation authority.
 |---|---:|---:|---:|---:|
 | Qwen3 decode layer, Attention 120 | 857 | 52604 | 920 | 67740 |
 | DeepSeek V4 CSA A | 1182 | 28981 | 580 | 22940 |
-| DeepSeek V4 CSA B | 1422 | 45001 | 720 | 81400 |
+| DeepSeek V4 CSA B | 1422 | 45001 | 1680 | 65980 |
 
 Qwen keeps its adjusted output projection (10 groups of 10), Gate and Up
 projections (17 groups of 5 each), and Attention=120 configuration. SiLU waits
@@ -19,8 +19,9 @@ for its corresponding Gate/Up producers through the captured dependencies.
 Its batch-16 fixture uses seed 1234 and per-request sequence lengths in 1..4096;
 128 request/KV-head work items are distributed over 120 Attention blocks.
 
-CSA A uses B=4, S=2 and starts `[8192, 0, 2, 3]`. CSA B uses B=20, S=2 and starts
-`[8192, 0, 2, 3, 7, 127, 128, 255, 511, 8192, 0, 2, 3, 7, 127, 128, 255, 511, 8192, 0]`.
+CSA A uses B=4, S=2 and starts `[8192, 0, 2, 3]`. CSA B uses B=20, S=2 with all 20 start positions fixed at 8192
+(KV length 8194 for every request). Its paired capture and both header formats
+were regenerated for this uniform-length fixture.
 KV length is start+2. B retains A's non-length-related dispatch widths, with
 additional token work inside each block. Its score has 200 logical page-split
 work items across 100 blocks; QK/PV also has 200 work items across 100 blocks.
