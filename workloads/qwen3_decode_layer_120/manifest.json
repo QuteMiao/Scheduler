@@ -1,0 +1,28 @@
+{
+  "name": "qwen3_decode_layer_120",
+  "source_benchmark": "qwen3-decode-layer",
+  "source_files_sha256": {
+    "deps.json": "e4b30ec2e419187eb6ca4f54e296e4b6bb89e376822eefcf96253a5f725d4ce3",
+    "name_map.json": "f6a12de84ab6cf9ef5d726fea9d729b7c084843516ced3cc5d5150f223b6dc29",
+    "Chip_swimlane_records.json": "00c99f31f6e338789662645fc4f80bee4a6695f83ef99c81e6713cb9a958ce48"
+  },
+  "capture_subset": "Swimlane preserves metadata and unmodified aicore_tasks; scheduler/host timing is not used.",
+  "expected_logical_tasks": 166,
+  "expected_cube_nodes": 545,
+  "expected_vector_nodes": 312,
+  "duration_unit": "ns",
+  "target_aic": 120,
+  "capture_aic": 24,
+  "capture_aiv": 48,
+  "parameters": {
+    "batch": 16,
+    "attention_blocks": 120,
+    "seed": 1234,
+    "seq_len_range": [
+      1,
+      4096
+    ]
+  },
+  "source_pypto_lib_base_commit": "092efde7317095c468fba9670efdb3ee6bd9de29",
+  "source_note": "Capture hashes identify the exact dataset; the base commit alone does not identify local tiling changes."
+}

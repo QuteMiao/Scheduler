@@ -32,7 +32,7 @@ cd "$ROOT_DIR"
 
 CC="${CC:-cc}"
 CFLAGS="${CFLAGS:--std=gnu11 -O2 -Wall -Wextra -pthread}"
-CPPFLAGS="${CPPFLAGS:--Iinclude -Isrc -I.}"
+CPPFLAGS="${CPPFLAGS:--D_GNU_SOURCE -Iinclude -Isrc -I.}"
 JOBS="${JOBS:-1}"
 DISPATCH_THREAD_CNTS="${DISPATCH_THREAD_CNTS:-1 2}"
 

@@ -1,0 +1,32 @@
+{
+  "name": "deepseek_v4_csa_a",
+  "source_benchmark": "deepseek-v4-csa",
+  "source_files_sha256": {
+    "deps.json": "6b4aee2bda650a593948fbee0a9dfd3c13c13f89f02b2bd76801c2450965ed83",
+    "name_map.json": "b1506974de0be558c40401c1202b67bc0147a62c7787edd25108a8e705ef24dd",
+    "Chip_swimlane_records.json": "c179743883a9aa538cf17e80b2750d5c75ec3b21e401fd83dd1865e4ec10e2a3"
+  },
+  "capture_subset": "Swimlane preserves metadata and unmodified aicore_tasks; scheduler/host timing is not used.",
+  "expected_logical_tasks": 70,
+  "expected_cube_nodes": 745,
+  "expected_vector_nodes": 437,
+  "duration_unit": "ns",
+  "target_aic": 120,
+  "capture_aic": 24,
+  "capture_aiv": 48,
+  "parameters": {
+    "batch": 4,
+    "seq": 2,
+    "score_blocks": 80,
+    "qk_pv_blocks": 40,
+    "seed": 1234,
+    "start_positions": [
+      8192,
+      0,
+      2,
+      3
+    ]
+  },
+  "source_pypto_lib_base_commit": "092efde7317095c468fba9670efdb3ee6bd9de29",
+  "source_note": "Capture hashes identify the exact dataset; the base commit alone does not identify local tiling changes."
+}

@@ -6,7 +6,10 @@
 #include <stdio.h>
 #include <stdatomic.h>
 
-#include "cases2/qwen3_14b_decode.h"
+#ifndef SCHEDULER_CASE2
+#define SCHEDULER_CASE2 "cases2/qwen3_14b_decode.h"
+#endif
+#include SCHEDULER_CASE2
 #include "hw_queue.h"
 
 #define SCHEDULER_THREAD_CNT 1
