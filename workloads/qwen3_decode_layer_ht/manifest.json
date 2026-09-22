@@ -1,0 +1,57 @@
+{
+  "name": "qwen3_decode_layer_ht",
+  "source_leaf": "V200-benchmark/qwen3_decode_layer/ht_batch80",
+  "expected_logical_tasks": 2080,
+  "expected_cube_nodes": 1995,
+  "expected_vector_nodes": 1280,
+  "provenance": {
+    "capture_dir": "artifacts/qwen_deps_review_20260922/ht",
+    "task_id": "task_20260922_002153_16336620731",
+    "platform": "a2a3",
+    "serving_case": "HT_BATCH80",
+    "seed": 1234,
+    "layers": 1,
+    "golden_passed": true,
+    "post_capture_edge_pruning": false,
+    "source_sha256": {
+      "decode_fwd.py": "456c08c55409b6ae7f34067a93226f512e4cf9dfa66ae1823aa7e077f99d188e",
+      "run_benchmark.py": "382e491521d96aa21b2a840a5a431be1f13190b55d236f0b71e865622c4bc5f8",
+      "paged_attention_pypto.py": "0bc36ce2f50b369e308dd21e75b454ff8a58db79caff8c32be024481ad8a53d0"
+    },
+    "audit": {
+      "logical_tasks": 2080,
+      "edge_records": 8064,
+      "unique_wait_edges": 7914,
+      "checks": 4510,
+      "windows": [
+        {
+          "window": 0,
+          "down_tasks": 85,
+          "down_reachable": 85
+        },
+        {
+          "window": 1,
+          "down_tasks": 85,
+          "down_reachable": 85
+        },
+        {
+          "window": 2,
+          "down_tasks": 85,
+          "down_reachable": 85
+        },
+        {
+          "window": 3,
+          "down_tasks": 85,
+          "down_reachable": 85
+        },
+        {
+          "window": 4,
+          "down_tasks": 85,
+          "down_reachable": 85
+        }
+      ],
+      "errors": [],
+      "passed": true
+    }
+  }
+}

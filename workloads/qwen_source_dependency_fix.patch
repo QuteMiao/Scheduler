@@ -1,0 +1,344 @@
+--- a/qwen3_decode_layer/lt_batch16/pypto-lib-operator/decode_fwd.py
++++ b/qwen3_decode_layer/lt_batch16/pypto-lib-operator/decode_fwd.py
+@@ -460,27 +460,33 @@
+         k_proj = pl.assemble(k_proj, pl.full([BATCH_PAD, KV_HIDDEN], dtype=pl.FP32, value=0.0), [0, 0])
+         v_proj = pl.assemble(v_proj, pl.full([BATCH_PAD, KV_HIDDEN], dtype=pl.FP32, value=0.0), [0, 0])
+
++    # These internal buffers use explicit task dependencies: each cast owns one
++    # K slice, gate/up own (K split, N tile), fold owns one N tile, and atomic
++    # output/down projections share only their seeded reduction destination.
++    # Whole-tensor tracking would serialize disjoint tiles. Every consumer below
++    # waits for all mathematical producers, including the final down/cast fan-in.
++    # Keep automatic tracking for layer inputs/outputs and attention state.
+     # Create the MLP/output accumulators and their single seed immediately
+     # after kv_seed. gate/up use per-k_split buffers so tensormap does not
+     # WAW-serialize the K_SPLITS_MLP dispatches that used to atomic-add into
+     # one shared gate_acc_all / up_acc_all (false deps: gate_proj→_0→_1→…).
+-    # silu sums the K partials. down_acc / attn_proj stay shared.
+-    down_acc_all = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32)
++    # Fold sums the K partials; down_acc / attn_proj use seeded atomic adds.
++    down_acc_all = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32, manual_dep=True)
+     # Per-k_split 2D buffers (no ListComp / no >2D tiles) so tensormap does not
+     # WAW-chain gate_proj → gate_proj_0 → … on one shared accumulator.
+-    gate_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    attn_proj_fp32 = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32)
+-    gate_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
++    gate_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    attn_proj_fp32 = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32, manual_dep=True)
++    gate_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
+     with pl.at(
+         level=pl.Level.CORE_GROUP,
+         name_hint="mlp_out_seed",
+@@ -593,11 +599,11 @@
+     # Scope-3 allocations. (down_acc_all / gate_acc_* / up_acc_* / attn_proj_fp32
+     # are created earlier, alongside their hoisted seed tasks between rope and attn.)
+     post_norm_partial = pl.create_tensor(
+-        [BATCH_PAD, HIDDEN], dtype=pl.FP32
++        [BATCH_PAD, HIDDEN], dtype=pl.FP32, manual_dep=True
+     )  # raw residual h1 (add-back); FP32 (was BF16)
+-    mlp_norm_in = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.BF16)  # h1 * post_gamma (gate/up input)
++    mlp_norm_in = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.BF16, manual_dep=True)  # h1 * post_gamma (gate/up input)
+     inv_rms_tile = pl.create_tensor([BATCH_PAD, 1], dtype=pl.FP32)
+-    mlp_tile = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.BF16)
++    mlp_tile = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.BF16, manual_dep=True)
+
+     # ── Scope 3b: MLP block (tensormap deps). ──
+     silu_tids = pl.array.create(MLP_ON, pl.TASK_ID)
+@@ -626,7 +632,7 @@
+         with pl.at(
+             level=pl.Level.CORE_GROUP,
+             name_hint="out_proj",
+-            deps=[out_proj_dummy],
++            deps=[out_proj_dummy, mlp_out_seed_tid],
+         ) as out_tid:
+             out_c_acc = pl.create_tensor([BATCH_PAD, OUT_TN], dtype=pl.FP32)
+             for out_lk in pl.pipeline(0, OUT_N_SUB_K, stage=2):
+@@ -646,7 +652,7 @@
+     with pl.spmd(
+         N_OUT_DIRECT_BLOCKS,
+         name_hint="out_proj",
+-        deps=[attn_done_tid],
++        deps=[attn_done_tid, mlp_out_seed_tid],
+     ) as out_proj_direct_tid:
+         out_idx = N_OUT_DIRECT + pl.get_block_idx()
+         n_out_proj = out_idx // K_SPLITS_OUT
+@@ -762,7 +768,7 @@
+         with pl.spmd(
+             GATE_UP_SPMD_N,
+             name_hint="gate_proj",
+-            deps=[cast_tids[k_split]],
++            deps=[cast_tids[k_split], mlp_out_seed_tid],
+         ) as gate_spmd_tid:
+             spmd_gate_n_out = pl.get_block_idx()
+             spmd_gate_n0 = spmd_gate_n_out * MLP_TN
+@@ -796,7 +802,7 @@
+         with pl.spmd(
+             GATE_UP_SPMD_N,
+             name_hint="up_proj",
+-            deps=[cast_tids[k_split]],
++            deps=[cast_tids[k_split], mlp_out_seed_tid],
+         ) as up_spmd_tid:
+             spmd_up_n_out = pl.get_block_idx()
+             spmd_up_n0 = spmd_up_n_out * MLP_TN
+@@ -837,7 +843,7 @@
+             with pl.at(
+                 level=pl.Level.CORE_GROUP,
+                 name_hint="gate_proj",
+-                deps=[gate_late_tids[k_split]],
++                deps=[gate_late_tids[k_split], mlp_out_seed_tid],
+             ) as gate_tid:
+                 c_acc = pl.create_tensor([BATCH_PAD, MLP_TN], dtype=pl.FP32)
+                 for lk in pl.pipeline(0, MLP_N_SUB_K, stage=2):
+@@ -863,7 +869,7 @@
+             with pl.at(
+                 level=pl.Level.CORE_GROUP,
+                 name_hint="up_proj",
+-                deps=[up_late_tids[k_split]],
++                deps=[up_late_tids[k_split], mlp_out_seed_tid],
+             ) as up_tid:
+                 c_acc = pl.create_tensor([BATCH_PAD, MLP_TN], dtype=pl.FP32)
+                 for lk in pl.pipeline(0, MLP_N_SUB_K, stage=2):
+@@ -886,8 +892,8 @@
+                     up_acc_4 = pl.assemble(up_acc_4, c_acc, [0, n0])
+             up_tids[n_out * K_SPLITS_MLP + k_split] = up_tid
+
+-    # Fold per-k partials into gate_acc_0 / up_acc_0 (2 tensors live per task)
+-    # so silu stays under Vec limit; gate/up matmuls keep private outs (no WAW).
++    # Fold each N tile in K order into gate_sum / up_sum. Different N tiles
++    # are disjoint; gf1 -> gf2 -> gf3 -> gf4 (and uf*) must remain ordered.
+     gate_fold_tids = pl.array.create(MLP_ON, pl.TASK_ID)
+     up_fold_tids = pl.array.create(MLP_ON, pl.TASK_ID)
+     for n_out in pl.parallel(MLP_ON):
+@@ -1008,6 +1014,7 @@
+                 mlp_tile = pl.assemble(mlp_tile, pl.cast(mlp_chunk, target_type=pl.BF16), [0, silu_off])
+         silu_tids[n_out] = silu_tid
+
++    down_tids = pl.array.create(DOWN_ON * K_SPLITS, pl.TASK_ID)
+     for n_out in pl.parallel(DOWN_ON):
+         n0 = n_out * DOWN_TN
+         for k_split in pl.range(K_SPLITS):
+@@ -1015,10 +1022,8 @@
+             with pl.at(
+                 level=pl.Level.CORE_GROUP,
+                 name_hint="down_proj",
+-                deps=[
+-                    silu_tids[k_split]
+-                ],  # down_seed flows through MLP, output projection, and attention
+-            ):
++                deps=[silu_tids[k_split], mlp_out_seed_tid],
++            ) as down_tid:
+                 c_acc = pl.create_tensor([BATCH_PAD, DOWN_TN], dtype=pl.FP32)
+                 for lk in pl.pipeline(0, N_SUB_K, stage=2):
+                     ks_off = lk * DOWN_TK
+@@ -1029,14 +1034,16 @@
+                     ]
+                     c_acc = pl.matmul_acc(c_acc, a_k, w_k, init_cond=(lk == 0))
+                 down_acc_all = pl.assemble(down_acc_all, c_acc, [0, n0], atomic=pl.AtomicType.Add)
++            down_tids[n_out * K_SPLITS + k_split] = down_tid
+
+     # ── dcr_xgamma: fused residual write + next-layer x*gamma.
+-    # Single pl.spmd(DOWN_ON) so disjoint slices run in parallel. Tensormap on
+-    # `down_acc_all` / `post_norm_partial` / `out` / `normed_out` orders this
+-    # after down_proj and before the next layer's readers.
++    # One SPMD dispatch consumes all N tiles: wait for every down partial and
++    # residual cast. Automatic tracking publishes out/normed_out to the next
++    # layer (or copy_out), while the internal buffers above are explicit.
+     with pl.spmd(
+         DOWN_ON,
+         name_hint="dcr_xgamma",
++        deps=[down_tids, cast_tids],
+     ):
+         n_out = pl.tile.get_block_idx()
+         n0 = n_out * DOWN_TN
+--- a/qwen3_decode_layer/ht_batch80/pypto-lib-operator/decode_fwd.py
++++ b/qwen3_decode_layer/ht_batch80/pypto-lib-operator/decode_fwd.py
+@@ -460,27 +460,33 @@
+         k_proj = pl.assemble(k_proj, pl.full([BATCH_PAD, KV_HIDDEN], dtype=pl.FP32, value=0.0), [0, 0])
+         v_proj = pl.assemble(v_proj, pl.full([BATCH_PAD, KV_HIDDEN], dtype=pl.FP32, value=0.0), [0, 0])
+
++    # These internal buffers use explicit task dependencies: each cast owns one
++    # K slice, gate/up own (K split, N tile), fold owns one N tile, and atomic
++    # output/down projections share only their seeded reduction destination.
++    # Whole-tensor tracking would serialize disjoint tiles. Every consumer below
++    # waits for all mathematical producers, including the final down/cast fan-in.
++    # Keep automatic tracking for layer inputs/outputs and attention state.
+     # Create the MLP/output accumulators and their single seed immediately
+     # after kv_seed. gate/up use per-k_split buffers so tensormap does not
+     # WAW-serialize the K_SPLITS_MLP dispatches that used to atomic-add into
+     # one shared gate_acc_all / up_acc_all (false deps: gate_proj→_0→_1→…).
+-    # silu sums the K partials. down_acc / attn_proj stay shared.
+-    down_acc_all = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32)
++    # Fold sums the K partials; down_acc / attn_proj use seeded atomic adds.
++    down_acc_all = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32, manual_dep=True)
+     # Per-k_split 2D buffers (no ListComp / no >2D tiles) so tensormap does not
+     # WAW-chain gate_proj → gate_proj_0 → … on one shared accumulator.
+-    gate_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    gate_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    attn_proj_fp32 = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32)
+-    gate_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
+-    up_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32)
++    gate_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    gate_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_0 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_1 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_2 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_3 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_acc_4 = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    attn_proj_fp32 = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.FP32, manual_dep=True)
++    gate_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
++    up_sum = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.FP32, manual_dep=True)
+     with pl.at(
+         level=pl.Level.CORE_GROUP,
+         name_hint="mlp_out_seed",
+@@ -593,11 +599,11 @@
+     # Scope-3 allocations. (down_acc_all / gate_acc_* / up_acc_* / attn_proj_fp32
+     # are created earlier, alongside their hoisted seed tasks between rope and attn.)
+     post_norm_partial = pl.create_tensor(
+-        [BATCH_PAD, HIDDEN], dtype=pl.FP32
++        [BATCH_PAD, HIDDEN], dtype=pl.FP32, manual_dep=True
+     )  # raw residual h1 (add-back); FP32 (was BF16)
+-    mlp_norm_in = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.BF16)  # h1 * post_gamma (gate/up input)
++    mlp_norm_in = pl.create_tensor([BATCH_PAD, HIDDEN], dtype=pl.BF16, manual_dep=True)  # h1 * post_gamma (gate/up input)
+     inv_rms_tile = pl.create_tensor([BATCH_PAD, 1], dtype=pl.FP32)
+-    mlp_tile = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.BF16)
++    mlp_tile = pl.create_tensor([BATCH_PAD, INTERMEDIATE], dtype=pl.BF16, manual_dep=True)
+
+     # ── Scope 3b: MLP block (tensormap deps). ──
+     silu_tids = pl.array.create(MLP_ON, pl.TASK_ID)
+@@ -626,7 +632,7 @@
+         with pl.at(
+             level=pl.Level.CORE_GROUP,
+             name_hint="out_proj",
+-            deps=[out_proj_dummy],
++            deps=[out_proj_dummy, mlp_out_seed_tid],
+         ) as out_tid:
+             out_c_acc = pl.create_tensor([BATCH_PAD, OUT_TN], dtype=pl.FP32)
+             for out_lk in pl.pipeline(0, OUT_N_SUB_K, stage=2):
+@@ -646,7 +652,7 @@
+     with pl.spmd(
+         N_OUT_DIRECT_BLOCKS,
+         name_hint="out_proj",
+-        deps=[attn_done_tid],
++        deps=[attn_done_tid, mlp_out_seed_tid],
+     ) as out_proj_direct_tid:
+         out_idx = N_OUT_DIRECT + pl.get_block_idx()
+         n_out_proj = out_idx // K_SPLITS_OUT
+@@ -762,7 +768,7 @@
+         with pl.spmd(
+             GATE_UP_SPMD_N,
+             name_hint="gate_proj",
+-            deps=[cast_tids[k_split]],
++            deps=[cast_tids[k_split], mlp_out_seed_tid],
+         ) as gate_spmd_tid:
+             spmd_gate_n_out = pl.get_block_idx()
+             spmd_gate_n0 = spmd_gate_n_out * MLP_TN
+@@ -796,7 +802,7 @@
+         with pl.spmd(
+             GATE_UP_SPMD_N,
+             name_hint="up_proj",
+-            deps=[cast_tids[k_split]],
++            deps=[cast_tids[k_split], mlp_out_seed_tid],
+         ) as up_spmd_tid:
+             spmd_up_n_out = pl.get_block_idx()
+             spmd_up_n0 = spmd_up_n_out * MLP_TN
+@@ -837,7 +843,7 @@
+             with pl.at(
+                 level=pl.Level.CORE_GROUP,
+                 name_hint="gate_proj",
+-                deps=[gate_late_tids[k_split]],
++                deps=[gate_late_tids[k_split], mlp_out_seed_tid],
+             ) as gate_tid:
+                 c_acc = pl.create_tensor([BATCH_PAD, MLP_TN], dtype=pl.FP32)
+                 for lk in pl.pipeline(0, MLP_N_SUB_K, stage=2):
+@@ -863,7 +869,7 @@
+             with pl.at(
+                 level=pl.Level.CORE_GROUP,
+                 name_hint="up_proj",
+-                deps=[up_late_tids[k_split]],
++                deps=[up_late_tids[k_split], mlp_out_seed_tid],
+             ) as up_tid:
+                 c_acc = pl.create_tensor([BATCH_PAD, MLP_TN], dtype=pl.FP32)
+                 for lk in pl.pipeline(0, MLP_N_SUB_K, stage=2):
+@@ -886,8 +892,8 @@
+                     up_acc_4 = pl.assemble(up_acc_4, c_acc, [0, n0])
+             up_tids[n_out * K_SPLITS_MLP + k_split] = up_tid
+
+-    # Fold per-k partials into gate_acc_0 / up_acc_0 (2 tensors live per task)
+-    # so silu stays under Vec limit; gate/up matmuls keep private outs (no WAW).
++    # Fold each N tile in K order into gate_sum / up_sum. Different N tiles
++    # are disjoint; gf1 -> gf2 -> gf3 -> gf4 (and uf*) must remain ordered.
+     gate_fold_tids = pl.array.create(MLP_ON, pl.TASK_ID)
+     up_fold_tids = pl.array.create(MLP_ON, pl.TASK_ID)
+     for n_out in pl.parallel(MLP_ON):
+@@ -1008,6 +1014,7 @@
+                 mlp_tile = pl.assemble(mlp_tile, pl.cast(mlp_chunk, target_type=pl.BF16), [0, silu_off])
+         silu_tids[n_out] = silu_tid
+
++    down_tids = pl.array.create(DOWN_ON * K_SPLITS, pl.TASK_ID)
+     for n_out in pl.parallel(DOWN_ON):
+         n0 = n_out * DOWN_TN
+         for k_split in pl.range(K_SPLITS):
+@@ -1015,10 +1022,8 @@
+             with pl.at(
+                 level=pl.Level.CORE_GROUP,
+                 name_hint="down_proj",
+-                deps=[
+-                    silu_tids[k_split]
+-                ],  # down_seed flows through MLP, output projection, and attention
+-            ):
++                deps=[silu_tids[k_split], mlp_out_seed_tid],
++            ) as down_tid:
+                 c_acc = pl.create_tensor([BATCH_PAD, DOWN_TN], dtype=pl.FP32)
+                 for lk in pl.pipeline(0, N_SUB_K, stage=2):
+                     ks_off = lk * DOWN_TK
+@@ -1029,14 +1034,16 @@
+                     ]
+                     c_acc = pl.matmul_acc(c_acc, a_k, w_k, init_cond=(lk == 0))
+                 down_acc_all = pl.assemble(down_acc_all, c_acc, [0, n0], atomic=pl.AtomicType.Add)
++            down_tids[n_out * K_SPLITS + k_split] = down_tid
+
+     # ── dcr_xgamma: fused residual write + next-layer x*gamma.
+-    # Single pl.spmd(DOWN_ON) so disjoint slices run in parallel. Tensormap on
+-    # `down_acc_all` / `post_norm_partial` / `out` / `normed_out` orders this
+-    # after down_proj and before the next layer's readers.
++    # One SPMD dispatch consumes all N tiles: wait for every down partial and
++    # residual cast. Automatic tracking publishes out/normed_out to the next
++    # layer (or copy_out), while the internal buffers above are explicit.
+     with pl.spmd(
+         DOWN_ON,
+         name_hint="dcr_xgamma",
++        deps=[down_tids, cast_tids],
+     ):
+         n_out = pl.tile.get_block_idx()
+         n0 = n_out * DOWN_TN

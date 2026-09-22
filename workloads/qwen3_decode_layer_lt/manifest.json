@@ -1,0 +1,37 @@
+{
+  "name": "qwen3_decode_layer_lt",
+  "source_leaf": "V200-benchmark/qwen3_decode_layer/lt_batch16",
+  "expected_logical_tasks": 416,
+  "expected_cube_nodes": 495,
+  "expected_vector_nodes": 448,
+  "provenance": {
+    "capture_dir": "artifacts/qwen_deps_review_20260922/lt",
+    "task_id": "task_20260922_002139_15137011592",
+    "platform": "a2a3",
+    "serving_case": "LT_BATCH16",
+    "seed": 1234,
+    "layers": 1,
+    "golden_passed": true,
+    "post_capture_edge_pruning": false,
+    "source_sha256": {
+      "decode_fwd.py": "456c08c55409b6ae7f34067a93226f512e4cf9dfa66ae1823aa7e077f99d188e",
+      "run_benchmark.py": "dd97fae9f7727b730e27b5e9adf1e293e85272b5849c3a9378deaa0b968066be",
+      "paged_attention_pypto.py": "b86fb4553c0bd1949b15dc94ee92363ec6f93296ea646752d45472db20152c47"
+    },
+    "audit": {
+      "logical_tasks": 416,
+      "edge_records": 1608,
+      "unique_wait_edges": 1580,
+      "checks": 902,
+      "windows": [
+        {
+          "window": 0,
+          "down_tasks": 85,
+          "down_reachable": 85
+        }
+      ],
+      "errors": [],
+      "passed": true
+    }
+  }
+}
