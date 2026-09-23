@@ -21,23 +21,42 @@
 
 ## 索引
 
-| 头文件 | 类型 | 任务数 | Cube / Vector | 线程 | 文档 |
-|--------|------|-------:|--------------:|-----:|------|
-| [`qwen3_decode_layer_lt.h`](../../cases/qwen3_decode_layer_lt.h) | capture | 943 | 495 / 448 | 1 | [qwen3_decode_layer.md](qwen3_decode_layer.md) |
-| [`qwen3_decode_layer_ht.h`](../../cases/qwen3_decode_layer_ht.h) | capture | 3275 | 1995 / 1280 | 1 | 同上 |
-| [`deepseek_v4_csa_a.h`](../../cases/deepseek_v4_csa_a.h) | capture | 535 | 313 / 222 | 1 | [deepseek_v4_csa.md](deepseek_v4_csa.md) |
-| [`deepseek_v4_csa_b.h`](../../cases/deepseek_v4_csa_b.h) | capture | 3459 | 1833 / 1626 | 1 | 同上 |
-| [`fg_t480_p4_l8_c2_d5.h`](../../cases/fg_t480_p4_l8_c2_d5.h) | fakegraph | 3840 | 1920 / 1920 | 2 | [fakegraph_fg_t480.md](fakegraph_fg_t480.md) |
-| [`fg_t480_p4_l8_c4_d5.h`](../../cases/fg_t480_p4_l8_c4_d5.h) | fakegraph | 3840 | 1920 / 1920 | 4 | 同上 |
+| 头文件 | 类型 | 任务数 | 屏障 dummy | 线程 | 文档 |
+|--------|------|-------:|----------:|-----:|------|
+| [`qwen3_decode_layer_lt.h`](../../cases/qwen3_decode_layer_lt.h) | capture | 278 | 5 | 1 | [qwen3_decode_layer.md](qwen3_decode_layer.md) |
+| [`qwen3_decode_layer_ht.h`](../../cases/qwen3_decode_layer_ht.h) | capture | 1378 | 13 | 1 | 同上 |
+| [`deepseek_v4_csa_lt.h`](../../cases/deepseek_v4_csa_lt.h) | capture | 74 | 3 | 1 | [deepseek_v4_csa.md](deepseek_v4_csa.md) |
+| [`deepseek_v4_csa_ht.h`](../../cases/deepseek_v4_csa_ht.h) | capture | 246 | 7 | 1 | 同上 |
+| [`fg_t480_p4_l8_c2_d5.h`](../../cases/fg_t480_p4_l8_c2_d5.h) | fakegraph | 3840 | — | 2 | [fakegraph_fg_t480.md](fakegraph_fg_t480.md) |
+| [`fg_t480_p4_l8_c4_d5.h`](../../cases/fg_t480_p4_l8_c4_d5.h) | fakegraph | 3840 | — | 4 | 同上 |
 | 其余 `fg_t480_*` / `qwen3_14b_*` | legacy / 族内变体 | — | — | — | 文件名见 `cases/`；不单开长文 |
 
-## Capture 去伪依赖
+任务数为 **逻辑 SPMD 节点** + `barrier_dummy`。`total_type`∈{0..5}，`total_spmd_cnt` 为 SPMD 宽度（非 SPMD 为 0）。
 
-Qwen LT / HT 已在源样例中按数学依赖修正共享缓冲区追踪，并重新上板通过数值校验；当前 `deps.json` **未做后处理删边**。旧清洗曾误删 fold 顺序依赖并漏补 down 汇合，不能继续使用。详见 [依赖复核报告](qwen3_dependency_review.md)。图与 header 使用同一次捕获，保留 dummy 路径；物理节点数和 duration 来自 onboard swimlane。
+## SPMD 逻辑节点与依赖展开
 
-CSA 两个 capture 仍保留此前清洗版本，本次 Qwen 复核不对其正确性作结论。
+逻辑 `pl.spmd` 在 deps 里常是单 task_id + `block_num`。生成器输出 **一个逻辑节点 / 一次 dispatch**，并写 `spmd_cnt`：
+
+1. **异形均分（Qwen）**：`out` 每窗 50→5×10；`gate`/`up` 每窗按 K 85→5×17。
+2. **对角 / 分桶 / 屏障**：逻辑边经 `classify_expand`；全员同步插入 `barrier_dummy`。
+3. **保持**：`1→N` 广播、真·单消费者 `N→1` 汇聚。
+
+实现见 [`tools/gen_capture_cases.py`](../../tools/gen_capture_cases.py)；单测 [`tests/test_irregular_spmd.py`](../../tests/test_irregular_spmd.py)、[`tests/test_spmd_expand.py`](../../tests/test_spmd_expand.py)。
+
+依赖结构图（逻辑 SPMD 主图 + 捕获对照）由 [`tools/gen_capture_deps_svg.py`](../../tools/gen_capture_deps_svg.py) 生成：
+
+```bash
+python3 tools/gen_capture_deps_svg.py --all
+python3 tools/gen_capture_deps_svg.py --all --check
+```
+
+主图节点格式：`name | N nodes | CUBE_SPMD | spmd_cnt=W`；捕获对照仍为 `N tasks / M blocks`。
+
+## Capture 依赖口径
+
+Qwen LT / HT 已在源样例中按数学依赖修正共享缓冲区追踪，并重新上板通过数值校验；当前 `deps.json` **未做后处理删边**。详见 [依赖复核报告](qwen3_dependency_review.md)。物理展开阶段的对角/分桶/dummy 与「JSON 删边」是不同层。
 
 ## 注意
 
-- duration 单位为 **ns**。
+- duration 单位为 **ns**；`barrier_dummy` 为 0。
 - MIX（Cube+Vector）节点不建模核内 AIC/AIV 同步。
