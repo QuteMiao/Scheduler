@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Scheduler capture 样例介绍</title>
+<style>
+:root{--aic:#4c8bf5;--aiv:#2fa36b;--bg:#fafafa;--txt:#222;--muted:#666;--line:#e5e5e5;--panel:#fff}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--txt);line-height:1.65;font-size:15px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 20px 64px}
+h1{font-size:26px;margin:0 0 8px}
+h2{font-size:20px;margin:36px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{font-size:16px;margin:22px 0 8px}
+h4{font-size:15px;margin:18px 0 6px}
+.lead,.note{color:var(--muted);font-size:14px}
+a{color:#2563eb;text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:0.92em;background:#f3f4f6;padding:1px 5px;border-radius:4px}
+.table-wrap{overflow-x:auto;margin:12px 0 18px}
+table.data{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--panel)}
+table.data th,table.data td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+table.data th{background:#f3f4f6;font-weight:600}
+table.data td strong{color:#b45309}
+.filter-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.filter-label{color:var(--muted);font-size:13px;margin-right:4px}
+.fbtn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 11px;font-size:13px;cursor:pointer}
+.fbtn.active{border-color:var(--aic);color:var(--aic);font-weight:600;background:#eff6ff}
+.fig{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0 18px}
+.fig svg{width:100%;height:auto;display:block}
+.fig-legend{display:flex;gap:14px;font-size:12.5px;color:var(--muted);margin-top:4px}
+.lg.aic::before,.lg.aiv::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.lg.aic::before{background:var(--aic)}
+.lg.aiv::before{background:var(--aiv)}
+ul{padding-left:1.3em}
+nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:16px 0}
+nav.toc a{display:inline-block;margin-right:14px;font-size:14px}
+</style>
+</head><body><div class='wrap'>
+<h1>Scheduler capture 样例介绍</h1>
+<p class="lead">四个 capture 用例：CSA LT/HT、Qwen LT/HT。含 SPMD 构建口径、调度速度/需求（MTasks/s），以及上板与 sim120 时间序列（图嵌在本页）。</p>
+<nav class="toc">
+<a href="#index">样例索引</a>
+<a href="#spmd">SPMD 构建</a>
+<a href="#demand">调度需求</a>
+<a href="#series">时间序列</a>
+</nav>
+<h2 id="index">1. 样例索引</h2>
+<p class="note">链接仅指向 Scheduler 仓内文件。V200 叶名仅作数据源对照（无链接）。</p>
+<div class="table-wrap"><table class="data"><thead><tr>
+<th>展示名</th><th>case</th><th>头文件</th><th>workloads</th><th>说明 / 结构图</th><th>V200 叶（对照）</th>
+</tr></thead><tbody>
+<tr><td><strong>CSA LT</strong></td><td><code>deepseek_v4_csa_lt</code></td><td><a href="../../cases/deepseek_v4_csa_lt.h"><code>deepseek_v4_csa_lt.h</code></a></td><td><a href="../../workloads/deepseek_v4_csa_lt/"><code>workloads/deepseek_v4_csa_lt/</code></a></td><td><a href="./deepseek_v4_csa.md">deepseek_v4_csa.md</a> · <a href="./figures/deepseek_v4_csa_lt_deps.svg">deps.svg</a> · <a href="./figures/deepseek_v4_csa_lt_capture_deps.svg">capture</a></td><td><code>basic_batch4_mtp1</code></td></tr>
+<tr><td><strong>CSA HT</strong></td><td><code>deepseek_v4_csa_ht</code></td><td><a href="../../cases/deepseek_v4_csa_ht.h"><code>deepseek_v4_csa_ht.h</code></a></td><td><a href="../../workloads/deepseek_v4_csa_ht/"><code>workloads/deepseek_v4_csa_ht/</code></a></td><td><a href="./deepseek_v4_csa.md">deepseek_v4_csa.md</a> · <a href="./figures/deepseek_v4_csa_ht_deps.svg">deps.svg</a> · <a href="./figures/deepseek_v4_csa_ht_capture_deps.svg">capture</a></td><td><code>ht_batch20_mtp3</code></td></tr>
+<tr><td><strong>Qwen LT</strong></td><td><code>qwen3_decode_layer_lt</code></td><td><a href="../../cases/qwen3_decode_layer_lt.h"><code>qwen3_decode_layer_lt.h</code></a></td><td><a href="../../workloads/qwen3_decode_layer_lt/"><code>workloads/qwen3_decode_layer_lt/</code></a></td><td><a href="./qwen3_decode_layer.md">qwen3_decode_layer.md</a> · <a href="./figures/qwen3_decode_layer_lt_deps.svg">deps.svg</a> · <a href="./figures/qwen3_decode_layer_lt_capture_deps.svg">capture</a></td><td><code>lt_batch16</code></td></tr>
+<tr><td><strong>Qwen HT</strong></td><td><code>qwen3_decode_layer_ht</code></td><td><a href="../../cases/qwen3_decode_layer_ht.h"><code>qwen3_decode_layer_ht.h</code></a></td><td><a href="../../workloads/qwen3_decode_layer_ht/"><code>workloads/qwen3_decode_layer_ht/</code></a></td><td><a href="./qwen3_decode_layer.md">qwen3_decode_layer.md</a> · <a href="./figures/qwen3_decode_layer_ht_deps.svg">deps.svg</a> · <a href="./figures/qwen3_decode_layer_ht_capture_deps.svg">capture</a></td><td><code>ht_batch80</code></td></tr>
+</tbody></table></div>
+<h2 id="spmd">2. SPMD 构建方式</h2>
+<ul>
+<li><strong>粒度</strong>：每个逻辑 dispatch 一节点，外加可选 <code>barrier_dummy</code>；宽度写入 <code>total_spmd_cnt</code>（非 SPMD 为 0）；<code>total_type</code>∈{0..5}（3–5 为 <code>*_SPMD</code>）。</li>
+<li><strong>任务数量写法</strong>：单任务 <code>a</code>；SPMD <code>a x SPMD(b)</code>（b 为该节点 SPMD 子任务数）。</li>
+<li><strong>Qwen out / gate / up</strong>：每窗收成等宽包——out <code>5 x SPMD(10)</code>，gate/up <code>5 x SPMD(17)</code>；HT 多窗直接写成 <code>25 x SPMD(…)</code>；包间无边。</li>
+<li><strong>依赖</strong>：在逻辑节点上分类边（broadcast / gather / diagonal / bucket / barrier）；包内并行由 <code>spmd_cnt</code> 表达。</li>
+</ul>
+<div class="table-wrap"><table class="data"><thead><tr>
+<th>样例</th><th>逻辑节点（含 barrier）</th><th>说明</th>
+</tr></thead><tbody>
+<tr><td>Qwen LT</td><td>278</td><td>out/gate/up 为 5 路等宽 SPMD 包</td></tr>
+<tr><td>Qwen HT</td><td>1378</td><td>每窗重复 LT 打包</td></tr>
+<tr><td>CSA LT</td><td>74</td><td>正规 SPMD / 单任务</td></tr>
+<tr><td>CSA HT</td><td>246</td><td>同上</td></tr>
+</tbody></table></div>
+<h3>各 kernel SPMD 使用</h3>
+<h4>Qwen</h4>
+<p class="note">列：<strong>LT</strong> / <strong>HT</strong>。单任务写 <code>a</code>；SPMD 写 <code>a x SPMD(b)</code>（b 为子任务数）。</p>
+<div class="table-wrap"><table class="data"><thead><tr><th>kernel</th><th>资源</th><th>LT</th><th>HT</th></tr></thead><tbody>
+<tr><td>copy_hidden</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>x_gamma0</td><td>VECTOR</td><td>1 x SPMD(5)</td><td>5 x SPMD(5)</td></tr>
+<tr><td>attn_out_seed</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>rms_recip</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>q_seed</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>q_proj</td><td>CUBE</td><td>1 x SPMD(50)</td><td>5 x SPMD(50)</td></tr>
+<tr><td>kv_seed</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>mlp_out_seed</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>k_proj</td><td>CUBE</td><td>1 x SPMD(10)</td><td>5 x SPMD(10)</td></tr>
+<tr><td>v_proj</td><td>CUBE</td><td>1 x SPMD(10)</td><td>5 x SPMD(10)</td></tr>
+<tr><td>attn_phase0</td><td>VECTOR</td><td>1 x SPMD(16)</td><td>5 x SPMD(16)</td></tr>
+<tr><td>attn_swpipe_aic</td><td>MIX</td><td>1 x SPMD(120)</td><td>5 x SPMD(24)</td></tr>
+<tr><td>out_proj</td><td>CUBE</td><td>5 x SPMD(10)</td><td>25 x SPMD(10)</td></tr>
+<tr><td>residual_rms_cast</td><td>VECTOR</td><td>5</td><td>25</td></tr>
+<tr><td>post_rms_reduce</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+<tr><td>gate_proj</td><td>CUBE</td><td>5 x SPMD(17)</td><td>25 x SPMD(17)</td></tr>
+<tr><td>up_proj</td><td>CUBE</td><td>5 x SPMD(17)</td><td>25 x SPMD(17)</td></tr>
+<tr><td>gate_fold</td><td>VECTOR</td><td>68</td><td>340</td></tr>
+<tr><td>up_fold</td><td>VECTOR</td><td>68</td><td>340</td></tr>
+<tr><td>silu</td><td>VECTOR</td><td>17</td><td>85</td></tr>
+<tr><td>down_proj</td><td>CUBE</td><td>85</td><td>425</td></tr>
+<tr><td>dcr_xgamma</td><td>VECTOR</td><td>1 x SPMD(5)</td><td>5 x SPMD(5)</td></tr>
+<tr><td>copy_out</td><td>VECTOR</td><td>1</td><td>5</td></tr>
+</tbody></table></div>
+<h4>CSA</h4>
+<p class="note">列：<strong>LT</strong> / <strong>HT</strong>。单任务写 <code>a</code>；SPMD 写 <code>a x SPMD(b)</code>（b 为子任务数）。</p>
+<div class="table-wrap"><table class="data"><thead><tr><th>kernel</th><th>资源</th><th>LT</th><th>HT</th></tr></thead><tbody>
+<tr><td>hc_pre_rms</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>hc_pre_linear</td><td>CUBE</td><td>1 x SPMD(4)</td><td>5 x SPMD(4)</td></tr>
+<tr><td>hc_pre_linear_reduce</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>split_pre_post</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>comb_sinkhorn</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>mix_x</td><td>VECTOR</td><td>1 x SPMD(4)</td><td>5 x SPMD(4)</td></tr>
+<tr><td>csa_rope_step</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>rope_interleave</td><td>VECTOR</td><td>2</td><td>2</td></tr>
+<tr><td>csa_cmp_rope</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>rms_norm</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>q_rope_prepare</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>qr_proj_seed</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>qr_proj_matmul</td><td>CUBE</td><td>1 x SPMD(16)</td><td>5 x SPMD(16)</td></tr>
+<tr><td>qr_rms_norm_quant</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>qproj_matmul</td><td>CUBE</td><td>1 x SPMD(64)</td><td>5 x SPMD(64)</td></tr>
+<tr><td>qproj_dequant_rms_nope_rope</td><td>VECTOR</td><td>1 x SPMD(16)</td><td>5 x SPMD(16)</td></tr>
+<tr><td>kv_proj_seed</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>kv_proj_matmul</td><td>CUBE</td><td>1 x SPMD(16)</td><td>5 x SPMD(16)</td></tr>
+<tr><td>kv_rms_norm_rope</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>prefetch_o_proj_w</td><td>VECTOR</td><td>1</td><td>—</td></tr>
+<tr><td>csa_cache_writeback</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>kv_score_proj</td><td>CUBE</td><td>1 x SPMD(8) + 1 x SPMD(16)</td><td>1 x SPMD(8) + 1 x SPMD(64)</td></tr>
+<tr><td>scatter_softmax_pool</td><td>VECTOR</td><td>2</td><td>2 x SPMD(5)</td></tr>
+<tr><td>rmsnorm_rope_cache_write</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>idx_qr_proj_matmul</td><td>CUBE</td><td>1 x SPMD(8)</td><td>5 x SPMD(8)</td></tr>
+<tr><td>idx_qr_proj_dequant</td><td>VECTOR</td><td>1 x SPMD(8)</td><td>5 x SPMD(8)</td></tr>
+<tr><td>qr_rope_swap_idx</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>qr_rope</td><td>VECTOR</td><td>1 x SPMD(16)</td><td>5 x SPMD(16)</td></tr>
+<tr><td>qr_hadamard_matmul</td><td>CUBE</td><td>1 x SPMD(8)</td><td>5 x SPMD(32)</td></tr>
+<tr><td>qr_hadamard_quant</td><td>VECTOR</td><td>1 x SPMD(8)</td><td>5 x SPMD(8)</td></tr>
+<tr><td>weights_proj</td><td>CUBE</td><td>1 x SPMD(4)</td><td>5 x SPMD(4)</td></tr>
+<tr><td>weights_proj_reduce</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>rmsnorm_rope</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>kv_hadamard</td><td>CUBE</td><td>1</td><td>1</td></tr>
+<tr><td>kv_and_cache_write</td><td>VECTOR</td><td>1</td><td>1</td></tr>
+<tr><td>score_aic</td><td>MIX</td><td>1 x SPMD(16)</td><td>5 x SPMD(40)</td></tr>
+<tr><td>topk</td><td>VECTOR</td><td>1 x SPMD(8)</td><td>5 x SPMD(8)</td></tr>
+<tr><td>kv_touch</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>csa_slots_build_valid_qk_plan</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>qk_pv_aic</td><td>MIX</td><td>1 x SPMD(24)</td><td>5 x SPMD(40)</td></tr>
+<tr><td>rope_cs</td><td>VECTOR</td><td>1</td><td>1 x SPMD(5)</td></tr>
+<tr><td>merge_norm</td><td>VECTOR</td><td>1 x SPMD(32)</td><td>5 x SPMD(64)</td></tr>
+<tr><td>proj_a_mm</td><td>CUBE</td><td>8 x SPMD(8)</td><td>40 x SPMD(8)</td></tr>
+<tr><td>quant</td><td>VECTOR</td><td>8</td><td>40</td></tr>
+<tr><td>proj_b_mm</td><td>CUBE</td><td>8 x SPMD(8)</td><td>40 x SPMD(8)</td></tr>
+<tr><td>proj_b_act</td><td>VECTOR</td><td>1 x SPMD(8)</td><td>5 x SPMD(8)</td></tr>
+<tr><td>hc_post</td><td>VECTOR</td><td>1 x SPMD(8)</td><td>5 x SPMD(8)</td></tr>
+<tr><td>rope_cs_swap</td><td>VECTOR</td><td>—</td><td>1</td></tr>
+</tbody></table></div>
+<h2 id="demand">3. 调度速度与调度需求</h2>
+<p class="note">以 <strong>5µs</strong> 分箱的 <strong>completion</strong> 计数 <code>C_i</code>：<code>speed_i = C_i / 5</code>（单位 <strong>MTasks/s</strong>，数值上等于 tasks/µs）。对全部分箱统计 avg / P90 / P99 / max；<strong>调度需求 R = max(speed_i)</strong>。百分位为 nearest-rank：index = ⌈p/100·N⌉−1。<br/>(1) <strong>main×5</strong>：上板速度再 × AIC 核比 <code>120/24=5</code>。<br/>(2) <strong>sim120</strong>：120 核离线模拟泳道直接分箱。</p>
+<div class="table-wrap"><table class="data"><thead><tr>
+<th>场景</th><th>算法</th><th>avg</th><th>P90</th><th>P99</th><th>max（=需求）</th><th>C_peak (5µs)</th>
+</tr></thead><tbody>
+<tr><td>CSA LT</td><td>main×5</td><td>6.0112</td><td>18.0</td><td>27.0</td><td><strong>27.0</strong></td><td>135</td></tr>
+<tr><td>CSA LT</td><td>sim120</td><td>3.0</td><td>9.6</td><td>13.0</td><td><strong>13.0</strong></td><td>65</td></tr>
+<tr><td>CSA HT</td><td>main×5</td><td>8.6259</td><td>21.0</td><td>40.0</td><td><strong>51.0</strong></td><td>255</td></tr>
+<tr><td>CSA HT</td><td>sim120</td><td>8.9971</td><td>22.4</td><td>48.0</td><td><strong>48.0</strong></td><td>240</td></tr>
+<tr><td>Qwen LT</td><td>main×5</td><td>5.0973</td><td>11.0</td><td>25.0</td><td><strong>25.0</strong></td><td>125</td></tr>
+<tr><td>Qwen LT</td><td>sim120</td><td>3.0453</td><td>7.4</td><td>48.0</td><td><strong>48.0</strong></td><td>240</td></tr>
+<tr><td>Qwen HT</td><td>main×5</td><td>4.104</td><td>10.0</td><td>18.0</td><td><strong>26.0</strong></td><td>130</td></tr>
+<tr><td>Qwen HT</td><td>sim120</td><td>3.8943</td><td>10.0</td><td>14.6</td><td><strong>14.6</strong></td><td>73</td></tr>
+</tbody></table></div>
+<h2 id="series">4. 时间序列</h2>
+<p class="note">蓝=dispatch，绿=completion。图为内联 SVG；切换叶/窗宽由页内 JS 重绘。</p>
+<h3>4.1 main 上板</h3>
+<div class="filter-bar" id="main-leaf-bar"><span class="filter-label">叶</span>
+<button type="button" class="fbtn active" data-main-leaf="basic_batch4_mtp1">CSA LT</button>
+<button type="button" class="fbtn" data-main-leaf="ht_batch20_mtp3">CSA HT</button>
+<button type="button" class="fbtn" data-main-leaf="lt_batch16">Qwen LT</button>
+<button type="button" class="fbtn" data-main-leaf="ht_batch80">Qwen HT</button>
+</div>
+<div class="filter-bar" id="main-bin-bar">
+<span class="filter-label">分段窗宽</span>
+<button type="button" class="fbtn active" data-bin-us="5">5µs</button>
+<button type="button" class="fbtn" data-bin-us="10">10µs</button>
+<button type="button" class="fbtn" data-bin-us="20">20µs</button>
+</div>
+<div class="filter-bar" id="mode-mainline" data-mode-for="mainline">
+<span class="filter-label">显示</span>
+<button type="button" class="fbtn active" data-series-mode="both">二者都显示</button>
+<button type="button" class="fbtn" data-series-mode="dispatch">只显示下发</button>
+<button type="button" class="fbtn" data-series-mode="completion">只显示完成</button>
+</div><div class="fig" data-ml-chart="mainline" data-main-leaf="basic_batch4_mtp1" data-series-mode="both"><svg viewBox="0 0 720 200" preserveAspectRatio="xMidYMid meet" role="img" aria-label="CSA LT — dispatch / completion"><text x="44" y="14" font-size="11" fill="#555">CSA LT — dispatch / completion</text><text x="12" y="94" font-size="9" fill="#666" transform="rotate(-90 12,94)">任务数</text><line x1="44" y1="24" x2="44" y2="164" stroke="#e5e5e5"/><line x1="44" y1="164" x2="672" y2="164" stroke="#e5e5e5"/><text x="40" y="162.0" font-size="9" text-anchor="end" fill="#666">0</text><line x1="44" y1="164.0" x2="672" y2="164.0" stroke="#f0f0f0"/><text x="40" y="97.0" font-size="9" text-anchor="end" fill="#666">24</text><line x1="44" y1="94.0" x2="672" y2="94.0" stroke="#f0f0f0"/><text x="40" y="27.0" font-size="9" text-anchor="end" fill="#666">48</text><line x1="44" y1="24.0" x2="672" y2="24.0" stroke="#f0f0f0"/><path data-series="dispatch" d="M44.0,149.4 H51.1 V164.0 H58.3 V164.0 H65.4 V161.1 H72.5 V164.0 H79.7 V161.1 H86.8 V149.4 H94.0 V161.1 H101.1 V161.1 H108.2 V161.1 H115.4 V158.2 H122.5 V164.0 H129.6 V161.1 H136.8 V161.1 H143.9 V117.3 H151.0 V161.1 H158.2 V164.0 H165.3 V161.1 H172.5 V164.0 H179.6 V117.3 H186.7 V140.7 H193.9 V120.2 H201.0 V137.8 H208.1 V152.3 H215.3 V120.2 H222.4 V140.7 H229.5 V114.4 H236.7 V143.6 H243.8 V137.8 H251.0 V149.4 H258.1 V137.8 H265.2 V149.4 H272.4 V114.4 H279.5 V164.0 H286.6 V158.2 H293.8 V94.0 H300.9 V158.2 H308.0 V134.8 H315.2 V161.1 H322.3 V164.0 H329.5 V164.0 H336.6 V164.0 H343.7 V164.0 H350.9 V164.0 H358.0 V164.0 H365.1 V164.0 H372.3 V164.0 H379.4 V164.0 H386.5 V161.1 H393.7 V161.1 H400.8 V24.0 H408.0 V164.0 H415.1 V164.0 H422.2 V140.7 H429.4 V164.0 H436.5 V164.0 H443.6 V164.0 H450.8 V164.0 H457.9 V164.0 H465.0 V161.1 H472.2 V164.0 H479.3 V32.8 H486.5 V94.0 H493.6 V164.0 H500.7 V114.4 H507.9 V111.5 H515.0 V164.0 H522.1 V164.0 H529.3 V164.0 H536.4 V164.0 H543.5 V164.0 H550.7 V164.0 H557.8 V140.7 H565.0 V114.4 H572.1 V134.8 H579.2 V111.5 H586.4 V161.1 H593.5 V94.0 H600.6 V164.0 H607.8 V94.0 H614.9 V152.3 H622.0 V123.2 H629.2 V149.4 H636.3 V108.6 H643.5 V164.0 H650.6 V140.7 H657.7 V164.0 H664.9 V164.0 H672.0 V164.0 H672.0 V164.0 H44.0 Z" fill="rgba(76,139,245,0.12)" stroke="none"/><path data-series="dispatch" d="M44.0,149.4 H51.1 V164.0 H58.3 V164.0 H65.4 V161.1 H72.5 V164.0 H79.7 V161.1 H86.8 V149.4 H94.0 V161.1 H101.1 V161.1 H108.2 V161.1 H115.4 V158.2 H122.5 V164.0 H129.6 V161.1 H136.8 V161.1 H143.9 V117.3 H151.0 V161.1 H158.2 V164.0 H165.3 V161.1 H172.5 V164.0 H179.6 V117.3 H186.7 V140.7 H193.9 V120.2 H201.0 V137.8 H208.1 V152.3 H215.3 V120.2 H222.4 V140.7 H229.5 V114.4 H236.7 V143.6 H243.8 V137.8 H251.0 V149.4 H258.1 V137.8 H265.2 V149.4 H272.4 V114.4 H279.5 V164.0 H286.6 V158.2 H293.8 V94.0 H300.9 V158.2 H308.0 V134.8 H315.2 V161.1 H322.3 V164.0 H329.5 V164.0 H336.6 V164.0 H343.7 V164.0 H350.9 V164.0 H358.0 V164.0 H365.1 V164.0 H372.3 V164.0 H379.4 V164.0 H386.5 V161.1 H393.7 V161.1 H400.8 V24.0 H408.0 V164.0 H415.1 V164.0 H422.2 V140.7 H429.4 V164.0 H436.5 V164.0 H443.6 V164.0 H450.8 V164.0 H457.9 V164.0 H465.0 V161.1 H472.2 V164.0 H479.3 V32.8 H486.5 V94.0 H493.6 V164.0 H500.7 V114.4 H507.9 V111.5 H515.0 V164.0 H522.1 V164.0 H529.3 V164.0 H536.4 V164.0 H543.5 V164.0 H550.7 V164.0 H557.8 V140.7 H565.0 V114.4 H572.1 V134.8 H579.2 V111.5 H586.4 V161.1 H593.5 V94.0 H600.6 V164.0 H607.8 V94.0 H614.9 V152.3 H622.0 V123.2 H629.2 V149.4 H636.3 V108.6 H643.5 V164.0 H650.6 V140.7 H657.7 V164.0 H664.9 V164.0 H672.0 V164.0" fill="none" stroke="var(--aic)" stroke-width="1.6"/><path data-series="completion" d="M44.0,164.0 H51.1 V164.0 H58.3 V161.1 H65.4 V161.1 H72.5 V155.2 H79.7 V161.1 H86.8 V161.1 H94.0 V164.0 H101.1 V152.3 H108.2 V155.2 H115.4 V161.1 H122.5 V161.1 H129.6 V161.1 H136.8 V158.2 H143.9 V164.0 H151.0 V164.0 H158.2 V164.0 H165.3 V143.6 H172.5 V143.6 H179.6 V155.2 H186.7 V161.1 H193.9 V161.1 H201.0 V134.8 H208.1 V134.8 H215.3 V152.3 H222.4 V140.7 H229.5 V140.7 H236.7 V131.9 H243.8 V155.2 H251.0 V131.9 H258.1 V137.8 H265.2 V143.6 H272.4 V117.3 H279.5 V111.5 H286.6 V140.7 H293.8 V140.7 H300.9 V129.0 H308.0 V137.8 H315.2 V111.5 H322.3 V164.0 H329.5 V149.4 H336.6 V161.1 H343.7 V161.1 H350.9 V164.0 H358.0 V164.0 H365.1 V161.1 H372.3 V161.1 H379.4 V164.0 H386.5 V155.2 H393.7 V161.1 H400.8 V164.0 H408.0 V161.1 H415.1 V164.0 H422.2 V164.0 H429.4 V134.8 H436.5 V105.7 H443.6 V146.5 H450.8 V164.0 H457.9 V146.5 H465.0 V143.6 H472.2 V158.2 H479.3 V149.4 H486.5 V161.1 H493.6 V164.0 H500.7 V158.2 H507.9 V129.0 H515.0 V99.8 H522.1 V85.2 H529.3 V137.8 H536.4 V164.0 H543.5 V152.3 H550.7 V94.0 H557.8 V152.3 H565.0 V164.0 H572.1 V164.0 H579.2 V158.2 H586.4 V99.8 H593.5 V155.2 H600.6 V99.8 H607.8 V149.4 H614.9 V99.8 H622.0 V137.8 H629.2 V114.4 H636.3 V134.8 H643.5 V111.5 H650.6 V146.5 H657.7 V158.2 H664.9 V146.5 H672.0 V140.7 H672.0 V164.0 H44.0 Z" fill="rgba(47,163,107,0.12)" stroke="none"/><path data-series="completion" d="M44.0,164.0 H51.1 V164.0 H58.3 V161.1 H65.4 V161.1 H72.5 V155.2 H79.7 V161.1 H86.8 V161.1 H94.0 V164.0 H101.1 V152.3 H108.2 V155.2 H115.4 V161.1 H122.5 V161.1 H129.6 V161.1 H136.8 V158.2 H143.9 V164.0 H151.0 V164.0 H158.2 V164.0 H165.3 V143.6 H172.5 V143.6 H179.6 V155.2 H186.7 V161.1 H193.9 V161.1 H201.0 V134.8 H208.1 V134.8 H215.3 V152.3 H222.4 V140.7 H229.5 V140.7 H236.7 V131.9 H243.8 V155.2 H251.0 V131.9 H258.1 V137.8 H265.2 V143.6 H272.4 V117.3 H279.5 V111.5 H286.6 V140.7 H293.8 V140.7 H300.9 V129.0 H308.0 V137.8 H315.2 V111.5 H322.3 V164.0 H329.5 V149.4 H336.6 V161.1 H343.7 V161.1 H350.9 V164.0 H358.0 V164.0 H365.1 V161.1 H372.3 V161.1 H379.4 V164.0 H386.5 V155.2 H393.7 V161.1 H400.8 V164.0 H408.0 V161.1 H415.1 V164.0 H422.2 V164.0 H429.4 V134.8 H436.5 V105.7 H443.6 V146.5 H450.8 V164.0 H457.9 V146.5 H465.0 V143.6 H472.2 V158.2 H479.3 V149.4 H486.5 V161.1 H493.6 V164.0 H500.7 V158.2 H507.9 V129.0 H515.0 V99.8 H522.1 V85.2 H529.3 V137.8 H536.4 V164.0 H543.5 V152.3 H550.7 V94.0 H557.8 V152.3 H565.0 V164.0 H572.1 V164.0 H579.2 V158.2 H586.4 V99.8 H593.5 V155.2 H600.6 V99.8 H607.8 V149.4 H614.9 V99.8 H622.0 V137.8 H629.2 V114.4 H636.3 V134.8 H643.5 V111.5 H650.6 V146.5 H657.7 V158.2 H664.9 V146.5 H672.0 V140.7" fill="none" stroke="var(--aiv)" stroke-width="1.6"/><text x="44.0" y="186" font-size="9" text-anchor="start" fill="#666">63.3</text><text x="358.0" y="186" font-size="9" text-anchor="middle" fill="#666">283.3</text><text x="672.0" y="186" font-size="9" text-anchor="end" fill="#666">508.3</text><text x="678.0" y="186" font-size="9" text-anchor="start" fill="#999">µs</text></svg><div class="fig-legend"><span class="lg aic" data-legend="dispatch">dispatch</span><span class="lg aiv" data-legend="completion">completion</span></div><p class="note" data-ml-note>span 63.3→508.3 µs；dispatch 峰 48，completion 峰 27。</p></div>
+<h3>4.2 sim120（AIC=120）</h3>
+<div class="filter-bar" id="sim120-leaf-bar"><span class="filter-label">叶</span>
+<button type="button" class="fbtn active" data-sim120-leaf="basic_batch4_mtp1">CSA LT</button>
+<button type="button" class="fbtn" data-sim120-leaf="ht_batch20_mtp3">CSA HT</button>
+<button type="button" class="fbtn" data-sim120-leaf="lt_batch16">Qwen LT</button>
+<button type="button" class="fbtn" data-sim120-leaf="ht_batch80">Qwen HT</button>
+</div>
+<div class="filter-bar" id="sim120-bin-bar">
+<span class="filter-label">分段窗宽</span>
+<button type="button" class="fbtn active" data-bin-us="5">5µs</button>
+<button type="button" class="fbtn" data-bin-us="10">10µs</button>
+<button type="button" class="fbtn" data-bin-us="20">20µs</button>
+</div>
+<div class="filter-bar" id="mode-sim120" data-mode-for="sim120">
+<span class="filter-label">显示</span>
+<button type="button" class="fbtn active" data-series-mode="both">二者都显示</button>
+<button type="button" class="fbtn" data-series-mode="dispatch">只显示下发</button>
+<button type="button" class="fbtn" data-series-mode="completion">只显示完成</button>
+</div><div class="fig" data-ml-chart="sim120" data-sim120-leaf="basic_batch4_mtp1" data-series-mode="both"><svg viewBox="0 0 720 200" preserveAspectRatio="xMidYMid meet" role="img" aria-label="CSA LT — dispatch / completion"><text x="44" y="14" font-size="11" fill="#555">CSA LT — dispatch / completion</text><text x="12" y="94" font-size="9" fill="#666" transform="rotate(-90 12,94)">任务数</text><line x1="44" y1="24" x2="44" y2="164" stroke="#e5e5e5"/><line x1="44" y1="164" x2="672" y2="164" stroke="#e5e5e5"/><text x="40" y="162.0" font-size="9" text-anchor="end" fill="#666">0</text><line x1="44" y1="164.0" x2="672" y2="164.0" stroke="#f0f0f0"/><text x="40" y="97.0" font-size="9" text-anchor="end" fill="#666">37</text><line x1="44" y1="94.0" x2="672" y2="94.0" stroke="#f0f0f0"/><text x="40" y="27.0" font-size="9" text-anchor="end" fill="#666">74</text><line x1="44" y1="24.0" x2="672" y2="24.0" stroke="#f0f0f0"/><path data-series="dispatch" d="M44.0,143.2 H63.6 V156.4 H83.2 V152.6 H102.9 V164.0 H122.5 V162.1 H142.1 V164.0 H161.8 V50.5 H181.4 V160.2 H201.0 V160.2 H220.6 V24.0 H240.2 V160.2 H259.9 V131.8 H279.5 V164.0 H299.1 V147.0 H318.8 V133.7 H338.4 V131.8 H358.0 V162.1 H377.6 V164.0 H397.2 V103.5 H416.9 V148.9 H436.5 V162.1 H456.1 V164.0 H475.8 V73.2 H495.4 V164.0 H515.0 V103.5 H534.6 V164.0 H554.2 V42.9 H573.9 V164.0 H593.5 V150.8 H613.1 V41.0 H632.8 V148.9 H652.4 V148.9 H672.0 V164.0 H672.0 V164.0 H44.0 Z" fill="rgba(76,139,245,0.12)" stroke="none"/><path data-series="dispatch" d="M44.0,143.2 H63.6 V156.4 H83.2 V152.6 H102.9 V164.0 H122.5 V162.1 H142.1 V164.0 H161.8 V50.5 H181.4 V160.2 H201.0 V160.2 H220.6 V24.0 H240.2 V160.2 H259.9 V131.8 H279.5 V164.0 H299.1 V147.0 H318.8 V133.7 H338.4 V131.8 H358.0 V162.1 H377.6 V164.0 H397.2 V103.5 H416.9 V148.9 H436.5 V162.1 H456.1 V164.0 H475.8 V73.2 H495.4 V164.0 H515.0 V103.5 H534.6 V164.0 H554.2 V42.9 H573.9 V164.0 H593.5 V150.8 H613.1 V41.0 H632.8 V148.9 H652.4 V148.9 H672.0 V164.0" fill="none" stroke="var(--aic)" stroke-width="1.6"/><path data-series="completion" d="M44.0,156.4 H63.6 V150.8 H83.2 V154.5 H102.9 V156.4 H122.5 V164.0 H142.1 V162.1 H161.8 V162.1 H181.4 V124.3 H201.0 V118.6 H220.6 V129.9 H240.2 V158.3 H259.9 V41.0 H279.5 V164.0 H299.1 V118.6 H318.8 V147.0 H338.4 V116.7 H358.0 V147.0 H377.6 V164.0 H397.2 V160.2 H416.9 V103.5 H436.5 V148.9 H456.1 V164.0 H475.8 V162.1 H495.4 V164.0 H515.0 V73.2 H534.6 V164.0 H554.2 V103.5 H573.9 V164.0 H593.5 V58.1 H613.1 V133.7 H632.8 V42.9 H652.4 V148.9 H672.0 V148.9 H672.0 V164.0 H44.0 Z" fill="rgba(47,163,107,0.12)" stroke="none"/><path data-series="completion" d="M44.0,156.4 H63.6 V150.8 H83.2 V154.5 H102.9 V156.4 H122.5 V164.0 H142.1 V162.1 H161.8 V162.1 H181.4 V124.3 H201.0 V118.6 H220.6 V129.9 H240.2 V158.3 H259.9 V41.0 H279.5 V164.0 H299.1 V118.6 H318.8 V147.0 H338.4 V116.7 H358.0 V147.0 H377.6 V164.0 H397.2 V160.2 H416.9 V103.5 H436.5 V148.9 H456.1 V164.0 H475.8 V162.1 H495.4 V164.0 H515.0 V73.2 H534.6 V164.0 H554.2 V103.5 H573.9 V164.0 H593.5 V58.1 H613.1 V133.7 H632.8 V42.9 H652.4 V148.9 H672.0 V148.9" fill="none" stroke="var(--aiv)" stroke-width="1.6"/><text x="44.0" y="186" font-size="9" text-anchor="start" fill="#666">0.0</text><text x="358.0" y="186" font-size="9" text-anchor="middle" fill="#666">80.0</text><text x="672.0" y="186" font-size="9" text-anchor="end" fill="#666">163.0</text><text x="678.0" y="186" font-size="9" text-anchor="start" fill="#999">µs</text></svg><div class="fig-legend"><span class="lg aic" data-legend="dispatch">dispatch</span><span class="lg aiv" data-legend="completion">completion</span></div><p class="note" data-ml-note>span 0.0→163.0 µs；dispatch 峰 74，completion 峰 65。</p></div>
+<script type="application/json" id="series-data">{"mainline_series":{"basic_batch4_mtp1":{"t0":63.3,"t1":508.3,"bin_us":5.0,"dispatch_peak":48,"completion_peak":27,"n_bins":89,"dispatch":[5,0,0,1,0,1,5,1,1,1,2,0,1,1,16,1,0,1,0,16,8,15,9,4,15,8,17,7,9,5,9,5,17,0,2,24,2,10,1,0,0,0,0,0,0,0,0,0,1,1,48,0,0,8,0,0,0,0,0,1,0,45,24,0,17,18,0,0,0,0,0,0,8,17,10,18,1,24,0,24,4,14,5,19,0,8,0,0,0],"completion":[0,0,1,1,3,1,1,0,4,3,1,1,1,2,0,0,0,7,7,3,1,1,10,10,4,8,8,11,3,11,9,7,16,18,8,8,12,9,18,0,5,1,1,0,0,1,1,0,3,1,0,1,0,0,10,20,6,0,6,7,2,5,1,0,2,12,22,27,9,0,4,24,4,0,0,2,22,3,22,5,22,9,17,10,18,6,2,6,8]},"ht_batch20_mtp3":{"t0":77.8,"t1":2082.6,"bin_us":5.0,"dispatch_peak":72,"completion_peak":51,"n_bins":401,"dispatch":[10,0,1,1,0,5,0,4,7,0,4,4,0,5,6,5,4,0,0,4,0,4,0,4,0,4,0,5,1,5,0,0,24,8,16,0,0,5,11,5,13,5,9,12,4,6,7,9,5,16,12,4,18,8,19,6,16,10,7,16,5,0,10,0,5,16,8,23,1,0,6,7,10,9,0,16,6,16,13,18,3,16,9,16,7,16,8,17,14,12,21,8,0,16,6,15,23,1,11,8,16,8,0,8,0,24,0,16,0,0,32,0,0,0,16,16,0,16,0,16,16,0,0,24,8,16,16,0,24,8,24,8,16,16,0,8,0,0,8,0,0,8,0,0,0,8,0,0,8,0,0,0,0,72,0,0,6,18,24,0,0,0,72,0,3,30,0,15,0,0,48,24,0,27,0,21,0,0,24,48,0,0,24,24,0,0,0,72,0,0,48,0,0,0,8,0,0,0,8,0,0,0,8,0,0,0,8,0,0,8,0,0,0,5,0,0,24,24,24,24,24,0,0,0,0,0,0,0,0,0,0,0,0,0,48,24,0,0,3,24,21,0,0,0,0,0,0,0,72,0,48,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,72,0,48,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,72,0,48,0,0,0,0,0,0,0,0,0,0,0,0,0,0,48,0,0,16,0,0,0,40,32,32,0,8,0,0,9,9,1,31,24,1,9,34,0,7,13,3,13,40,19,24,14,1,20,8,8,42,17,0,25,8,8,3,12,13,9,21,19,4,12,16,13,15,12,15,15,17,9,17,15,13,19,16,13,6,20,23,15,12,7,16,6,17,8,8,16,0,8,0,0,8,0,8,0,0,8,0,0,8,0,0,8,0,0,8,0,0,8,0,0],"completion":[0,0,1,2,6,2,2,4,0,8,3,4,0,4,5,1,5,0,4,0,6,3,1,3,3,1,1,3,0,1,5,5,0,0,0,0,4,7,12,1,7,11,10,7,15,16,6,14,17,7,5,14,10,17,5,24,13,2,12,18,0,16,6,0,10,5,0,0,0,14,9,8,15,8,16,2,8,12,12,20,19,2,3,4,19,18,25,2,0,19,10,21,22,3,6,11,5,26,13,14,8,2,5,8,19,0,8,0,10,22,0,0,13,14,5,13,3,7,15,10,0,10,22,3,23,6,10,22,19,13,0,32,0,19,13,0,0,5,3,0,0,8,0,0,8,0,0,4,4,0,0,8,0,0,0,10,6,15,22,36,28,3,0,13,35,16,25,16,13,2,0,0,7,6,17,26,44,20,0,0,26,40,4,17,14,18,1,0,0,3,0,9,51,48,9,0,3,3,2,0,0,8,0,0,3,5,0,0,0,8,0,3,2,3,0,5,0,0,0,3,3,10,14,33,17,3,7,5,1,4,17,0,2,1,0,0,0,18,17,18,19,15,6,3,0,6,17,1,0,0,0,11,5,21,34,21,1,0,0,0,2,9,9,1,6,0,0,1,12,37,19,16,2,0,0,0,0,9,15,0,6,0,0,2,1,0,2,4,0,15,27,38,4,0,0,0,0,3,14,1,5,7,0,0,0,1,24,29,10,0,0,0,0,15,21,33,12,6,3,1,7,15,10,12,22,24,20,21,5,4,12,8,16,47,11,29,9,0,6,17,4,38,29,22,17,7,2,19,5,13,16,11,14,11,17,15,11,12,22,14,16,19,14,14,7,17,18,7,20,15,19,18,18,10,11,12,0,18,14,0,8,0,2,6,0,8,0,0,8,0,0,8,0,0,8,0,0,8,0,0,8]},"lt_batch16":{"t0":65.3,"t1":988.0,"bin_us":5.0,"dispatch_peak":48,"completion_peak":25,"n_bins":185,"dispatch":[5,0,0,0,6,0,0,16,12,20,0,0,0,18,4,0,0,0,0,0,0,0,32,0,0,0,0,24,48,0,24,48,0,3,0,0,39,0,6,0,0,0,0,18,24,3,0,45,3,3,12,18,0,18,0,0,12,12,0,0,0,0,0,0,0,0,0,0,0,0,0,8,8,0,8,24,2,0,0,0,2,0,6,6,12,18,8,2,0,0,0,4,2,2,8,8,0,0,0,1,1,3,3,10,5,1,0,0,0,1,8,5,7,2,1,0,0,1,8,7,1,4,1,2,0,0,1,8,6,11,3,5,5,6,4,7,5,9,3,10,4,6,7,4,9,5,10,2,13,6,18,16,5,3,6,9,5,6,8,2,0,6,1,12,5,10,2,1,0,0,0,0,0,0,0,0,0,0,0,0,5,0,1,0,0],"completion":[0,0,2,0,2,0,6,0,0,0,0,2,14,5,2,10,10,2,4,10,10,2,0,0,11,15,6,0,0,0,0,0,6,9,20,10,0,3,0,0,7,24,11,17,24,11,0,1,4,25,4,20,2,9,10,25,11,23,18,6,9,7,6,2,0,5,13,6,0,0,7,5,0,0,0,0,11,5,0,8,5,10,4,5,4,0,0,3,0,0,3,4,0,5,10,3,0,0,0,1,4,2,7,5,4,1,0,0,1,4,4,6,7,1,1,0,1,4,6,5,5,0,2,1,0,1,4,7,5,5,4,3,5,4,4,8,11,8,13,5,6,9,9,9,13,13,10,5,4,6,0,4,3,6,7,5,10,13,7,5,8,3,6,5,6,2,3,1,0,1,10,4,2,6,2,2,4,4,4,7,1,3,2,0,1]},"ht_batch80":{"t0":64.5,"t1":4050.9,"bin_us":5.0,"dispatch_peak":72,"completion_peak":26,"n_bins":798,"dispatch":[1,2,0,8,0,2,18,14,6,8,0,1,16,5,0,0,0,0,0,0,16,16,0,0,0,0,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,24,8,0,0,2,0,2,0,0,15,8,15,2,11,1,0,0,0,4,3,7,3,6,1,0,1,6,5,2,1,6,3,0,0,1,8,5,2,5,3,0,0,2,6,3,5,7,4,2,1,6,8,9,9,5,5,8,5,6,4,11,0,6,17,0,15,5,6,6,6,10,10,8,15,2,15,3,10,6,7,11,12,3,6,6,7,2,4,2,7,6,2,5,0,6,3,1,1,1,4,5,1,1,3,2,1,6,2,2,4,0,0,0,0,0,0,0,0,0,0,0,32,0,5,0,1,0,48,0,24,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,0,2,0,0,0,0,0,0,0,0,0,0,6,2,14,16,8,2,0,12,10,6,4,9,5,2,11,6,3,1,9,2,0,16,0,13,2,33,6,14,0,0,3,0,9,3,21,9,6,0,21,0,2,1,2,4,7,3,8,6,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,4,3,5,3,0,0,2,2,4,3,5,1,0,1,3,2,2,3,7,5,2,2,6,5,4,7,13,7,7,6,5,3,8,8,4,5,10,10,7,12,7,2,18,4,11,2,4,4,12,1,0,1,3,8,1,7,7,1,2,7,5,3,5,4,6,9,7,3,4,2,1,2,2,0,2,4,6,2,3,2,2,3,3,1,2,5,3,2,2,2,4,3,1,2,5,4,6,4,4,7,4,4,12,2,9,8,10,8,5,0,0,0,0,2,10,4,8,4,8,4,17,2,3,0,0,16,13,6,6,4,3,21,15,1,5,10,3,12,3,18,0,8,0,0,12,15,9,1,8,1,4,2,2,5,2,0,0,0,0,0,0,4,0,2,0,0,0,0,2,2,0,0,0,0,0,0,2,0,3,1,0,2,2,0,4,5,5,4,2,2,6,3,5,6,5,7,8,4,7,5,5,2,4,6,3,8,4,3,3,4,4,7,6,4,9,6,2,16,5,3,18,7,5,6,8,14,8,8,5,1,11,2,0,0,1,1,10,1,8,2,0,3,6,9,1,2,2,1,4,6,9,0,1,1,0,2,5,5,5,3,2,1,1,9,4,10,3,3,6,4,6,5,5,9,0,0,1,0,0,0,9,7,13,10,1,7,0,25,16,8,1,5,2,4,17,0,0,3,0,3,9,12,24,9,3,4,0,0,7,10,12,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,4,2,2,5,1,5,1,3,1,2,2,5,4,6,0,9,2,6,12,8,8,2,5,20,15,7,3,17,6,14,0,9,6,9,5,3,1,1,1,6,2,12,1,1,5,2,2,2,4,9,0,0,3,3,2,2,3,7,4,0,0,3,3,2,1,5,9,0,2,2,2,4,0,5,10,1,6,1,1,3,0,0,5,6,2,4,6,8,0,16,8,16,0,0,2,0,6,5,6,1,2,2,2,5,1,1,8,3,2,1,4,3,2,1,5,2,7,2,5,4,4,6,5,8,6,6,8,4,19,4,10,0,12,13,13,10,10,6,7,3,0,0,0,4,8,10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,1,0,0],"completion":[0,0,2,1,1,5,1,0,0,0,4,10,7,3,7,9,6,5,6,11,2,0,0,20,13,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,14,14,16,0,0,0,0,0,5,11,6,2,0,3,10,5,1,8,1,1,1,1,2,5,8,2,6,2,0,0,4,4,6,1,4,5,0,0,0,6,5,5,3,5,0,0,1,4,4,4,7,3,2,1,3,5,4,9,7,7,6,4,5,7,9,5,12,6,2,10,5,5,8,10,8,11,10,8,6,15,4,6,12,10,11,6,6,9,2,8,6,2,3,8,3,6,4,5,4,6,2,0,1,2,6,2,2,0,3,2,3,4,2,5,1,2,0,5,2,7,2,5,4,5,3,9,1,1,2,14,23,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,12,15,14,10,5,1,0,4,7,26,0,8,3,11,3,5,5,9,4,3,9,9,4,5,0,12,6,4,1,6,4,17,18,1,3,9,0,2,2,6,2,0,2,1,0,4,6,2,3,4,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,11,6,17,14,3,0,0,4,2,2,5,3,1,0,4,0,2,3,9,10,11,10,4,0,4,4,8,5,11,9,7,4,5,5,4,10,6,6,10,6,11,9,15,4,12,5,5,6,13,3,1,0,4,6,3,6,4,6,1,2,1,5,5,2,4,8,8,5,13,2,2,0,4,0,0,4,7,3,2,2,2,1,3,3,1,3,5,2,3,2,2,3,4,0,2,6,4,1,6,5,6,6,6,3,11,6,5,8,11,8,0,0,0,0,0,17,18,6,5,5,6,11,12,7,1,0,1,7,6,2,5,1,0,2,5,21,13,11,6,6,1,1,0,3,5,7,2,4,4,1,3,3,4,4,1,2,0,0,0,0,0,2,0,2,0,2,0,0,2,0,0,2,0,0,0,0,0,2,9,3,4,2,6,0,9,9,8,2,4,1,3,2,7,4,6,5,7,5,8,4,5,7,4,8,12,8,6,5,4,2,3,10,5,2,5,4,6,11,5,6,12,6,9,11,12,11,4,10,8,6,10,3,2,0,1,1,10,1,7,3,1,2,6,9,2,0,3,1,5,3,7,5,0,1,1,1,5,5,6,0,4,1,2,4,3,6,7,3,7,3,7,2,5,9,6,6,5,9,5,2,14,4,14,0,6,1,1,0,0,0,0,14,18,17,6,0,1,0,0,1,4,8,6,1,3,1,0,0,3,7,6,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,11,5,2,4,11,6,17,11,1,4,1,5,3,4,6,9,7,5,18,18,6,5,4,4,11,3,4,12,7,6,14,4,12,9,6,4,4,1,7,2,5,3,11,2,1,4,2,1,3,4,6,4,0,1,4,1,2,3,3,9,1,0,1,3,3,2,3,8,3,2,0,4,2,2,2,4,6,7,9,6,8,4,5,3,10,7,12,2,6,4,0,2,1,0,0,0,2,5,5,5,3,1,2,2,5,1,2,6,4,1,3,1,3,2,3,5,4,6,4,7,4,5,9,8,8,11,11,8,5,12,5,7,6,9,5,4,6,13,7,4,3,0,3,1,3,8,13,0,0,0,0,0,8,3,12,1,0,0,0,0,7,7,8,3,2,0,1]}},"mainline_titles":{"basic_batch4_mtp1":"CSA LT — dispatch / completion","ht_batch20_mtp3":"CSA HT — dispatch / completion","lt_batch16":"Qwen LT — dispatch / completion","ht_batch80":"Qwen HT — dispatch / completion"},"mainline_default":"basic_batch4_mtp1","sim120_series":{"basic_batch4_mtp1":{"t0":0.0,"t1":163.0,"bin_us":5.0,"dispatch_peak":74,"completion_peak":65,"n_bins":33,"dispatch":[11,4,6,0,1,0,60,2,2,74,2,17,0,9,16,17,1,0,32,8,1,0,48,0,32,0,64,0,7,65,8,8,0],"completion":[4,7,5,4,0,1,1,21,24,18,3,65,0,24,9,25,9,0,2,32,8,0,1,0,48,0,32,0,56,16,64,8,8]},"ht_batch20_mtp3":{"t0":0.0,"t1":336.0,"bin_us":5.0,"dispatch_peak":240,"completion_peak":240,"n_bins":68,"dispatch":[31,1,5,10,20,0,16,0,0,0,120,32,53,57,122,61,125,70,88,0,1,41,81,160,40,0,240,80,80,0,40,0,0,5,0,240,0,80,0,80,0,0,240,0,80,0,0,120,0,99,9,63,100,107,17,54,49,20,24,34,40,8,0,8,0,8,0,0],"completion":[3,18,10,5,5,0,21,11,0,5,5,32,48,96,78,56,77,127,88,16,21,121,10,200,41,0,40,80,160,80,0,80,0,40,0,5,0,80,0,240,0,0,80,0,112,128,0,80,0,94,13,60,100,100,27,81,14,90,35,48,26,8,32,16,0,8,0,8]},"lt_batch16":{"t0":0.0,"t1":262.0,"bin_us":5.0,"dispatch_peak":240,"completion_peak":240,"n_bins":53,"dispatch":[27,0,76,0,0,5,31,2,0,0,0,0,0,0,0,0,0,240,0,0,0,0,0,50,0,0,0,70,4,52,0,0,0,45,5,20,8,6,24,26,11,2,8,4,85,0,0,0,0,5,1,0,0],"completion":[2,1,6,1,0,9,101,2,18,0,0,0,0,0,0,0,0,1,0,0,0,0,0,240,0,0,18,10,24,3,1,0,0,37,31,50,9,19,49,25,27,13,9,5,5,0,0,0,0,85,5,0,1]},"ht_batch80":{"t0":0.0,"t1":615.0,"bin_us":5.0,"dispatch_peak":132,"completion_peak":73,"n_bins":123,"dispatch":[25,12,132,6,0,86,50,0,0,60,66,0,20,108,0,112,0,0,48,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,24,24,0,4,26,24,47,29,24,2,2,3,50,5,74,1,53,3,3,29,23,14,28,20,8,9,17,29,28,16,21,8,7,25,14,34,24,14,4,24,14,29,13,37,40,9,3,13,28,26,31,29,15,25,22,15,49,30,27,0,85,0,17,39,35,53,37,28,6,28,41,38,1,5,1,6,0,1,0],"completion":[14,3,22,10,4,72,0,66,0,70,0,50,16,60,10,72,0,0,16,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,48,48,0,36,34,36,42,73,9,39,44,10,24,8,5,2,50,3,4,29,26,15,33,14,8,9,16,30,22,22,21,8,9,23,14,33,25,14,4,24,12,31,15,29,40,16,2,13,22,31,31,30,13,23,13,26,51,27,17,29,70,18,2,30,34,54,37,31,7,28,40,50,23,7,73,14,5,1,1]}},"sim120_titles":{"basic_batch4_mtp1":"CSA LT — dispatch / completion","ht_batch20_mtp3":"CSA HT — dispatch / completion","lt_batch16":"Qwen LT — dispatch / completion","ht_batch80":"Qwen HT — dispatch / completion"},"sim120_default":"basic_batch4_mtp1"}</script>
+<script>
+
+(function () {
+  var dataEl = document.getElementById('series-data');
+  if (!dataEl) return;
+  var data = JSON.parse(dataEl.textContent);
+
+  function rebin(series, binUs) {
+    var base = series.bin_us || 5;
+    var factor = Math.max(1, Math.round(binUs / base));
+    var d = series.dispatch || [], c = series.completion || [];
+    var outD = [], outC = [], outT = [];
+    for (var i = 0; i < d.length; i += factor) {
+      var sd = 0, sc = 0, end = Math.min(i + factor, d.length);
+      for (var j = i; j < end; j++) { sd += d[j]; sc += c[j]; }
+      outD.push(sd); outC.push(sc);
+      outT.push(Math.round((series.t0 + i * base) * 10) / 10);
+    }
+    var dPeak = 0, cPeak = 0;
+    for (var k = 0; k < outD.length; k++) {
+      if (outD[k] > dPeak) dPeak = outD[k];
+      if (outC[k] > cPeak) cPeak = outC[k];
+    }
+    return {t0:series.t0,t1:series.t1,bin_us:binUs,times:outT,dispatch:outD,completion:outC,dispatch_peak:dPeak,completion_peak:cPeak};
+  }
+
+  function stepPath(ys, x0, y0, iw, ih, maxV, fill) {
+    var n = ys.length; if (!n) return '';
+    var pts = [];
+    for (var i = 0; i < n; i++) {
+      var px = n > 1 ? x0 + (i / (n - 1)) * iw : x0 + iw / 2;
+      var py = y0 + ih * (1 - (maxV ? ys[i] / maxV : 0));
+      pts.push([px, py]);
+    }
+    var d = ['M' + pts[0][0].toFixed(1) + ',' + pts[0][1].toFixed(1)];
+    for (var j = 1; j < pts.length; j++) {
+      d.push('H' + pts[j][0].toFixed(1));
+      d.push('V' + pts[j][1].toFixed(1));
+    }
+    if (fill) {
+      var base = y0 + ih;
+      d.push('H' + pts[pts.length - 1][0].toFixed(1));
+      d.push('V' + base.toFixed(1));
+      d.push('H' + pts[0][0].toFixed(1));
+      d.push('Z');
+    }
+    return d.join(' ');
+  }
+
+  function renderMlSvg(series, title, mode) {
+    mode = mode || 'both';
+    var showD = mode === 'both' || mode === 'dispatch';
+    var showC = mode === 'both' || mode === 'completion';
+    var w = 720, h = 200, padL = 44, padR = 48, padT = 24, padB = 36;
+    var iw = w - padL - padR, ih = h - padT - padB;
+    var ysD = series.dispatch, ysC = series.completion, maxV = 1, n = ysD.length;
+    for (var i = 0; i < n; i++) {
+      if (showD && ysD[i] > maxV) maxV = ysD[i];
+      if (showC && ysC[i] > maxV) maxV = ysC[i];
+    }
+    var xRight = padL + iw, parts = [];
+    parts.push('<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="' + title + '">');
+    parts.push('<text x="' + padL + '" y="14" font-size="11" fill="#555">' + title + '</text>');
+    parts.push('<text x="12" y="' + (padT + ih / 2).toFixed(0) + '" font-size="9" fill="#666" transform="rotate(-90 12,' + (padT + ih / 2).toFixed(0) + ')">任务数</text>');
+    parts.push('<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (padT + ih) + '" stroke="#e5e5e5"/>');
+    parts.push('<line x1="' + padL + '" y1="' + (padT + ih) + '" x2="' + xRight + '" y2="' + (padT + ih) + '" stroke="#e5e5e5"/>');
+    [0, 0.5, 1].forEach(function (frac) {
+      var val = Math.round(maxV * frac);
+      var py = padT + ih * (1 - frac);
+      var ty = frac > 0 ? py + 3 : py - 2;
+      parts.push('<text x="' + (padL - 4) + '" y="' + ty.toFixed(1) + '" font-size="9" text-anchor="end" fill="#666">' + val + '</text>');
+      parts.push('<line x1="' + padL + '" y1="' + py.toFixed(1) + '" x2="' + xRight + '" y2="' + py.toFixed(1) + '" stroke="#f0f0f0"/>');
+    });
+    [['dispatch', ysD, 'var(--aic)', 'rgba(76,139,245,0.12)', showD],
+     ['completion', ysC, 'var(--aiv)', 'rgba(47,163,107,0.12)', showC]].forEach(function (row) {
+      if (!row[4]) return;
+      parts.push('<path data-series="' + row[0] + '" d="' + stepPath(row[1], padL, padT, iw, ih, maxV, true) + '" fill="' + row[3] + '" stroke="none"/>');
+      parts.push('<path data-series="' + row[0] + '" d="' + stepPath(row[1], padL, padT, iw, ih, maxV, false) + '" fill="none" stroke="' + row[2] + '" stroke-width="1.6"/>');
+    });
+    var idxs = n > 1 ? [0, Math.floor(n / 2), n - 1] : [0];
+    idxs.forEach(function (ii) {
+      var px = n > 1 ? padL + (ii / (n - 1)) * iw : padL + iw / 2;
+      var anchor = ii === 0 ? 'start' : (ii === n - 1 ? 'end' : 'middle');
+      var t = (ii === n - 1) ? series.t1 : series.times[ii];
+      parts.push('<text x="' + px.toFixed(1) + '" y="' + (h - 14) + '" font-size="9" text-anchor="' + anchor + '" fill="#666">' + t + '</text>');
+    });
+    parts.push('<text x="' + (xRight + 6).toFixed(1) + '" y="' + (h - 14) + '" font-size="9" text-anchor="start" fill="#999">µs</text>');
+    parts.push('</svg>');
+    return parts.join('');
+  }
+
+  function noteText(s, binUs, mode) {
+    var base = '窗宽 ' + binUs + 'µs；span ' + s.t0 + '→' + s.t1 + ' µs；';
+    if (mode === 'dispatch') return base + 'dispatch 峰 ' + s.dispatch_peak + '。';
+    if (mode === 'completion') return base + 'completion 峰 ' + s.completion_peak + '。';
+    return base + 'dispatch 峰 ' + s.dispatch_peak + '，completion 峰 ' + s.completion_peak + '。';
+  }
+
+  function paintFig(fig, base, title, binUs) {
+    if (!base || !base.dispatch) return;
+    var mode = fig.getAttribute('data-series-mode') || 'both';
+    var s = rebin(base, binUs);
+    var svg = fig.querySelector('svg');
+    if (svg) {
+      var wrap = document.createElement('div');
+      wrap.innerHTML = renderMlSvg(s, title, mode);
+      fig.replaceChild(wrap.firstChild, svg);
+    }
+    var note = fig.querySelector('[data-ml-note]');
+    if (note) note.textContent = noteText(s, binUs, mode);
+    fig.querySelectorAll('[data-legend]').forEach(function (el) {
+      var kind = el.getAttribute('data-legend');
+      el.style.display = (mode === 'both' || mode === kind) ? '' : 'none';
+    });
+  }
+
+  function bindChart(opts) {
+    var leaf = data[opts.defaultKey] || '';
+    var bin = 5;
+    var titles = data[opts.titlesKey] || {};
+    var seriesMap = data[opts.seriesKey] || {};
+
+    function paint() {
+      var fig = document.querySelector('[data-ml-chart="' + opts.chart + '"]');
+      if (!fig) return;
+      fig.setAttribute(opts.leafAttr, leaf);
+      paintFig(fig, seriesMap[leaf], titles[leaf] || leaf, bin);
+    }
+
+    var leafBar = document.getElementById(opts.leafBarId);
+    if (leafBar) {
+      leafBar.addEventListener('click', function (e) {
+        var btn = e.target.closest('[' + opts.leafAttr + ']');
+        if (!btn || !leafBar.contains(btn)) return;
+        leafBar.querySelectorAll('.fbtn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        leaf = btn.getAttribute(opts.leafAttr);
+        paint();
+      });
+    }
+    var binBar = document.getElementById(opts.binBarId);
+    if (binBar) {
+      binBar.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-bin-us]');
+        if (!btn || !binBar.contains(btn)) return;
+        binBar.querySelectorAll('.fbtn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        bin = parseInt(btn.getAttribute('data-bin-us'), 10) || 5;
+        paint();
+      });
+    }
+    paint();
+    return paint;
+  }
+
+  var paintMain = bindChart({
+    chart: 'mainline', seriesKey: 'mainline_series', titlesKey: 'mainline_titles',
+    defaultKey: 'mainline_default', leafAttr: 'data-main-leaf',
+    leafBarId: 'main-leaf-bar', binBarId: 'main-bin-bar'
+  });
+  var paintSim = bindChart({
+    chart: 'sim120', seriesKey: 'sim120_series', titlesKey: 'sim120_titles',
+    defaultKey: 'sim120_default', leafAttr: 'data-sim120-leaf',
+    leafBarId: 'sim120-leaf-bar', binBarId: 'sim120-bin-bar'
+  });
+
+  document.querySelectorAll('.filter-bar[data-mode-for]').forEach(function (bar) {
+    bar.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-series-mode]');
+      if (!btn || !bar.contains(btn)) return;
+      bar.querySelectorAll('.fbtn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      var key = bar.getAttribute('data-mode-for');
+      var fig = document.querySelector('[data-ml-chart="' + key + '"]');
+      if (!fig) return;
+      fig.setAttribute('data-series-mode', btn.getAttribute('data-series-mode'));
+      if (key === 'mainline') paintMain();
+      else if (key === 'sim120') paintSim();
+    });
+  });
+})();
+
+</script>
+</div></body></html>
